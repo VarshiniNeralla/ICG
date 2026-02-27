@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Home Group – Secure ID Card Generator</title>
+    <meta name="description"
+        content="Official secure ID card generator for My Home Group employees. Camera capture, QR verification, and instant print." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+    <!-- ============================================================
+       HEADER
+  ============================================================ -->
+    <header class="app-header">
+        <div class="header-inner">
+            <img src="assets/My_Home_Constructions_logo.webp" alt="My Home Group Logo" class="header-logo"
+                id="headerLogo" />
+            <div class="header-text">
+                <h1>Secure ID Card Generator</h1>
+                <p>My Home Group &mdash; Official HR Tool</p>
+            </div>
+        </div>
+    </header>
+
+    <!-- ============================================================
+       MAIN LAYOUT
+  ============================================================ -->
+    <main class="app-main">
+
+        <!-- ── LEFT PANEL ── -->
+        <section class="panel panel-left" aria-label="Employee data entry">
+
+            <!-- STEPPER -->
+            <div class="stepper">
+                <div class="step-item active" id="stepIndicator1">1 <span>Details</span></div>
+                <div class="step-item" id="stepIndicator2">2 <span>Photo</span></div>
+            </div>
+
+            <div class="carousel-container">
+                <div class="carousel-track" id="carouselTrack">
+
+                    <!-- STEP 1: DETAILS -->
+                    <div class="carousel-step active" id="step1">
+                        <div class="card-section">
+                            <h2 class="section-title">
+                                <span class="section-icon">📋</span> Employee Details
+                            </h2>
+
+                            <form id="empForm" novalidate autocomplete="off">
+                                <div class="form-row">
+                                    <div class="field-group">
+                                        <label for="fullName">Full Name <span class="required">*</span></label>
+                                        <input type="text" id="fullName" name="fullName" maxlength="40"
+                                            placeholder="e.g. Arun Kumar Sharma" aria-required="true"
+                                            autocomplete="off" />
+                                        <span class="field-error" id="err-fullName"></span>
+                                    </div>
+                                </div>
+
+                                <div class="form-row two-col">
+                                    <div class="field-group">
+                                        <label for="empId">Employee ID</label>
+                                        <input type="text" id="empId" name="empId" readonly placeholder="MHC-0000-00" />
+                                    </div>
+                                    <div class="field-group">
+                                        <label for="bloodGroup">Blood Group</label>
+                                        <select id="bloodGroup" name="bloodGroup">
+                                            <option value="">Select</option>
+                                            <option value="A+">A+</option>
+                                            <option value="A-">A-</option>
+                                            <option value="B+">B+</option>
+                                            <option value="B-">B-</option>
+                                            <option value="O+">O+</option>
+                                            <option value="O-">O-</option>
+                                            <option value="AB+">AB+</option>
+                                            <option value="AB-">AB-</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="form-row">
+                                    <div class="field-group">
+                                        <label for="designation">Designation <span class="required">*</span></label>
+                                        <select id="designation" name="designation" required>
+                                            <option value="">Select Category</option>
+                                            <option value="Worker">Worker</option>
+                                            <option value="Employee">Employee</option>
+                                        </select>
+                                        <span class="field-error" id="err-designation"></span>
+                                    </div>
+                                </div>
+
+                                <div class="form-row two-col">
+                                    <div class="field-group">
+                                        <label for="contact">Contact Number</label>
+                                        <input type="tel" id="contact" name="contact" maxlength="10"
+                                            placeholder="9876543210" autocomplete="off" />
+                                    </div>
+                                    <div class="field-group">
+                                        <label for="validity">Valid Until</label>
+                                        <input type="date" id="validity" name="validity" autocomplete="off" />
+                                    </div>
+                                </div>
+                            </form>
+
+                            <div class="step-actions">
+                                <div></div> <!-- Spacer -->
+                                <button type="button" id="btnNext" class="btn btn-primary">
+                                    Next: Take Photo
+                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"
+                                        style="margin-left: 4px;">
+                                        <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6-6-6z" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- STEP 2: PHOTO -->
+                    <div class="carousel-step" id="step2">
+                        <div class="card-section">
+                            <h2 class="section-title">
+                                <span class="section-icon">📷</span> Employee Photo
+                            </h2>
+
+                            <div class="webcam-container">
+                                <div class="webcam-view" id="webcamView">
+                                    <video id="videoFeed" autoplay muted playsinline
+                                        aria-label="Camera preview"></video>
+                                    <canvas id="snapCanvas" style="display:none;"></canvas>
+                                    <div class="photo-placeholder" id="photoPlaceholder">
+                                        <span class="placeholder-icon">👤</span>
+                                        <p>Camera not started</p>
+                                    </div>
+                                    <canvas id="croppedPhoto" style="display:none;"
+                                        aria-label="Captured photo preview"></canvas>
+                                </div>
+
+                                <!-- Error banner -->
+                                <div class="camera-error" id="cameraError" role="alert" aria-live="polite"
+                                    style="display:none;">
+                                </div>
+
+                                <div class="webcam-controls">
+                                    <button type="button" id="btnStartCamera" class="btn btn-secondary">
+                                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                                            <path
+                                                d="M18 10.48V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-4.48l4 3.98v-11l-4 3.5zM16 18H4V6h12v12z" />
+                                        </svg>
+                                        Start Camera
+                                    </button>
+                                    <button type="button" id="btnCapture" class="btn btn-primary" disabled>
+                                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                                            <circle cx="12" cy="12" r="3.2" />
+                                            <path
+                                                d="M9 2 7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z" />
+                                        </svg>
+                                        Capture
+                                    </button>
+                                    <button type="button" id="btnRetake" class="btn btn-ghost" style="display:none;">
+                                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                                            <path
+                                                d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z" />
+                                        </svg>
+                                        Retake
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="step-actions">
+                                <button type="button" id="btnBack" class="btn btn-ghost">
+                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"
+                                        style="margin-right: 4px;">
+                                        <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+                                    </svg>
+                                    Back to Details
+                                </button>
+                                <button type="button" id="btnGenerate" class="btn btn-generate"
+                                    style="width: auto; padding: 0.6rem 1.5rem;">
+                                    Generate ID
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ── RIGHT PANEL ── -->
+        <section class="panel panel-right" aria-label="ID card preview and export">
+
+            <div class="preview-header">
+                <h2 class="section-title">
+                    <span class="section-icon">🪪</span> ID Card Preview
+                </h2>
+                <div class="preview-actions" id="previewActions" style="display:none;">
+                    <button type="button" id="btnDownload" class="btn btn-secondary">
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                        </svg>
+                        Download PNG
+                    </button>
+                    <button type="button" id="btnPrint" class="btn btn-secondary">
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                            <path
+                                d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" />
+                        </svg>
+                        Print Card
+                    </button>
+                </div>
+            </div>
+
+            <!-- Canvas preview wrapper -->
+            <div class="canvas-wrapper" id="canvasWrapper">
+                <div class="canvas-empty-state" id="canvasEmpty">
+                    <div class="empty-icon">🪪</div>
+                    <p>Fill in the details and capture a photo,<br />then click <strong>Generate ID Card</strong>.</p>
+                </div>
+                <!-- The actual high-res canvas (1011 × 639, scaled via CSS) -->
+                <canvas id="idCard" width="1011" height="639" style="display:none;"
+                    aria-label="Generated ID card"></canvas>
+            </div>
+
+            <!-- Global render error -->
+            <div class="render-error" id="renderError" role="alert" aria-live="polite" style="display:none;"></div>
+
+        </section>
+
+    </main>
+
+    <!-- ============================================================
+       PRINT AREA (hidden except @media print)
+  ============================================================ -->
+    <div id="printArea" aria-hidden="true">
+        <img id="printImg" src="" alt="ID Card" />
+    </div>
+
+    <!-- ============================================================
+       SCRIPTS
+  ============================================================ -->
+    <script src="script.js"></script>
+
+</body>
+
+</html>
