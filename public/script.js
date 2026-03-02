@@ -2,13 +2,26 @@
 
 const CR80_W = 638;
 const CR80_H = 1011;
-const API_BASE = window.location.protocol + '//' + window.location.hostname + ':5000';
+const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:5000'
+    : window.location.origin;
 
 const SITE_CONFIG = {
-    'Grava': { tint: 'rgba(128,128,128,0.12)', code: 'GRAVA' },
-    'Apas': { tint: 'rgba(0,123,255,0.12)', code: 'APAS' },
-    'Vipina': { tint: 'rgba(220,53,69,0.12)', code: 'VIPINA' }
+    'Grava': { tint: 'rgba(128,128,128,0.07)', code: 'GRAVA' },
+    'Apas': { tint: 'rgba(0,123,255,0.07)', code: 'APAS' },
+    'Vipina': { tint: 'rgba(220,53,69,0.07)', code: 'VIPINA' }
 };
+
+// Internal utility to generate a unique code for new sites
+function getSiteCode(siteName) {
+    if (SITE_CONFIG[siteName]) return SITE_CONFIG[siteName].code;
+    return siteName.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 8);
+}
+
+function getSiteSegments(code) {
+    const mid = Math.ceil(code.length / 2);
+    return [code.substring(0, mid), code.substring(mid)];
+}
 
 const STORAGE_KEYS = { sites: 'ep_sites', contractors: 'ep_contractors', roles: 'ep_roles' };
 const getStoredList = (key) => {
@@ -48,6 +61,8 @@ let currentStep = 1;
 let batchQueue = [];
 let stream = null;
 let isSaved = false;
+let isInBatch = false;
+let isSaving = false; // Submission lock to prevent duplicates
 
 const loginScreen = document.getElementById('loginScreen');
 const mainApp = document.getElementById('mainApp');
@@ -218,7 +233,8 @@ function capturePhoto() {
     croppedPhoto.width = vw;
     croppedPhoto.height = vh;
     croppedPhoto.getContext('2d').drawImage(video, 0, 0, vw, vh);
-    capturedPhotoDataURL = croppedPhoto.toDataURL('image/png');
+    // Compress to JPEG (0.7 quality) to save significant KB
+    capturedPhotoDataURL = croppedPhoto.toDataURL('image/jpeg', 0.7);
 
     video.style.display = 'none';
     croppedPhoto.style.display = 'block';
@@ -229,13 +245,35 @@ function capturePhoto() {
 }
 
 function drawWatermark(ctx) {
-    const text = `${operator.site.toUpperCase()} – ENTRY PASS – ${new Date().getFullYear()}`;
-    const tint = SITE_CONFIG[operator.site]?.tint || 'rgba(0,0,0,0.06)';
+    const siteName = operator.site || "UNKNOWN";
+    const code = getSiteCode(siteName);
+    const [seg1, seg2] = getSiteSegments(code);
+    const watermarkText = `⟁ ${seg1} ⟡ ${seg2} ⟁`;
+
+    // Increased visibility to 12% (0.12) as requested
+    const baseColor = SITE_CONFIG[siteName]?.tint || 'rgba(0,0,0,0.12)';
+    const tint = baseColor.replace(/[\d.]+\)$/g, '0.12)');
+
     ctx.save();
-    ctx.rotate(-35 * Math.PI / 180);
-    ctx.font = 'bold 24px Inter'; ctx.fillStyle = tint;
-    for (let y = -CR80_H; y < CR80_H * 2; y += 100) {
-        for (let x = -CR80_W; x < CR80_W * 2; x += 400) ctx.fillText(text, x, y);
+
+    // Unique dynamic rotation based on site code length for a "Site-Specific" tilt
+    const dynamicRotation = -25 - (code.length % 10); // Subtle variation between 25-35 degrees
+    ctx.rotate(dynamicRotation * Math.PI / 180);
+
+    ctx.font = 'bold 22px Inter';
+    ctx.fillStyle = tint;
+
+    // STAGGERED DIAMOND GRID: More unique and secure 
+    const stepX = 420;
+    const stepY = 120;
+
+    for (let y = -CR80_H * 2; y < CR80_H * 3; y += stepY) {
+        // Offset every second row for a diamond-flow pattern
+        const xOffset = (Math.abs(y / stepY) % 2 === 0) ? 0 : stepX / 2;
+
+        for (let x = -CR80_W * 2; x < CR80_W * 3; x += stepX) {
+            ctx.fillText(watermarkText, x + xOffset, y);
+        }
     }
     ctx.restore();
 }
@@ -288,12 +326,17 @@ async function renderCard() {
 }
 
 async function saveToBackend() {
+    if (isSaving || isSaved) return; // Prevention lock
+    isSaving = true;
+    isSaved = true; // Mark as saved immediately to prevent other buttons from triggering it
+
     const data = getFormData();
     data.photoPath = capturedPhotoDataURL;
     data.site = operator.site || '';
     data.operator = operator.name || '';
 
-    console.log('Sending data to backend:', data);
+    console.log('--- Submission Request Start ---');
+    console.log('Sending data to backend for:', data.fullName);
 
     try {
         const resp = await fetch(`${API_BASE}/api/save-employee`, {
@@ -302,10 +345,18 @@ async function saveToBackend() {
             body: JSON.stringify(data)
         });
         const result = await resp.json();
-        if (!resp.ok) throw new Error(result.error || 'Server error');
+        if (!resp.ok) {
+            isSaved = false; // Back to false on error 
+            throw new Error(result.error || 'Server error');
+        }
         console.log('Saved to backend success:', result);
     } catch (err) {
+        isSaved = false; // Allow retry on failure
         console.error('Backend save failed:', err.message);
+        showAlert("Save failed: " + err.message);
+    } finally {
+        isSaving = false;
+        console.log('--- Submission Request End ---');
     }
 }
 
@@ -321,17 +372,32 @@ function updateBatchUI() {
 }
 
 function nextEntry() {
-    passForm.reset(); ageInput.value = '';
-    capturedPhotoDataURL = null; video.style.display = 'none';
-    croppedPhoto.style.display = 'none'; photoPlaceholder.style.display = 'flex';
+    passForm.reset();
+    ageInput.value = '';
+
+    // Clear Step 2 fields manually (not in passForm)
+    document.getElementById('contractor').value = '';
+    document.getElementById('laborCamp').value = '';
+    document.getElementById('designation').value = '';
+    document.getElementById('contact').value = '';
+    document.getElementById('doi').value = '';
+    document.getElementById('validity').value = '';
+    document.getElementById('issueDate').value = '';
+
+    capturedPhotoDataURL = null;
+    video.style.display = 'none';
+    croppedPhoto.style.display = 'none';
+    photoPlaceholder.style.display = 'flex';
     if (canvasEmpty) canvasEmpty.style.display = 'flex';
     idCard.style.display = 'none';
-    previewActions.style.display = 'none'; btnNextEntry.style.display = 'none';
+    previewActions.style.display = 'none';
+    btnNextEntry.style.display = 'none';
     btnAddToBatch.style.display = 'inline-flex';
 
     setDefaultDates();
 
     isSaved = false;
+    isInBatch = false;
 
     goToStep(1);
 }
@@ -370,22 +436,28 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!capturedPhotoDataURL) return showAlert("Photo required.");
 
         btnGenerate.disabled = true;
+        btnGenerate.textContent = 'Rendering...';
+
         await renderCard();
 
-        if (!isSaved) {
-            await saveToBackend();
-            isSaved = true;
-        }
-
+        // Show buttons immediately so the user can download/print while it saves in background
         if (canvasEmpty) canvasEmpty.style.display = 'none';
         idCard.style.display = 'block';
         previewActions.style.display = 'flex';
+        btnGenerate.textContent = 'Saving to Cloud...';
+
+        if (!isSaved) {
+            await saveToBackend();
+        }
+
         btnGenerate.disabled = false;
+        btnGenerate.textContent = 'Generate Pass';
     };
 
     btnDownload.onclick = async () => {
         const siteCode = (SITE_CONFIG[operator.site]?.code || operator.site.toUpperCase()).substring(0, 5);
-        if (!isSaved) { await saveToBackend(); isSaved = true; }
+        if (!isSaved) await saveToBackend();
+        if (!isSaved) return; // Don't download if save failed
         const d = getFormData();
         const link = document.createElement('a');
         link.download = `ENTRY_PASS_${siteCode}_${d.fullName.replace(/\s+/g, '_').toUpperCase()}.png`;
@@ -393,20 +465,25 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     btnPrint.onclick = async () => {
-        if (!isSaved) { await saveToBackend(); isSaved = true; }
+        if (!isSaved) await saveToBackend();
+        if (!isSaved) return;
         document.getElementById('printImg').src = idCard.toDataURL('image/png');
         window.print();
     };
 
     btnAddToBatch.onclick = async () => {
+        if (isInBatch) {
+            return showAlert("This card is already added to the batch! Move to 'Next Entry'.");
+        }
         if (batchQueue.length >= 9) return showAlert('Batch full.');
 
         if (!isSaved) {
             await saveToBackend();
-            isSaved = true;
         }
+        if (!isSaved) return;
 
         batchQueue.push({ snap: idCard.toDataURL('image/png') });
+        isInBatch = true;
         updateBatchUI();
         btnAddToBatch.style.display = 'none'; btnNextEntry.style.display = 'inline-flex';
     };

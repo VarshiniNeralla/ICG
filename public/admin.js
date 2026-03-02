@@ -5,7 +5,9 @@
  * Dashboard, Records, CRUD Management, Settings
  */
 
-const API = window.location.protocol + '//' + window.location.hostname + ':5000';
+const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:5000'
+    : window.location.origin;
 const ADMIN_CREDS = { user: 'admin', pass: 'admin@123' };
 
 // Color palette for chart bars
@@ -159,7 +161,7 @@ async function loadRecords(from, to) {
         }
 
         records.forEach(r => {
-            const photoSrc = r.photoPath ? `${API}${r.photoPath}` : '';
+            const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API}${r.photoPath}`) : '';
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td>${photoSrc ? `<img src="${photoSrc}" class="record-photo" alt="Photo" />` : '<span style="color:var(--text-light)">N/A</span>'}</td>

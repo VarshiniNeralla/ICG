@@ -10,7 +10,12 @@ const app = express();
 require('dotenv').config();
 
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/idCardDB";
+const DB_URI = process.env.MONGO_URI;
+
+if (!DB_URI) {
+    console.error("CRITICAL ERROR: MONGO_URI is not defined in the environment variables.");
+    process.exit(1);
+}
 
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -29,23 +34,24 @@ app.use((req, res, next) => {
     next();
 });
 
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir);
-}
-
-app.use(express.static(path.join(__dirname, '../frontend')));
-app.use('/uploads', express.static(uploadsDir));
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, '../frontend', 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-mongoose.connect(MONGO_URI)
-    .then(() => console.log('Connected to MongoDB'))
-    .catch(err => console.error('Connection error:', err));
+// Only start the server after a successful DB connection
+mongoose.connect(DB_URI)
+    .then(() => {
+        console.log('Successfully connected to MongoDB Atlas');
+        app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+    })
+    .catch(err => {
+        console.error('CRITICAL ERROR: Could not connect to MongoDB Atlas:', err.message);
+        process.exit(1);
+    });
 
 const EmployeeSchema = new mongoose.Schema({
     fullName: String,
@@ -70,26 +76,25 @@ const EmployeeSchema = new mongoose.Schema({
 const Employee = mongoose.model('Employee', EmployeeSchema);
 
 app.post('/api/save-employee', async (req, res) => {
+    const reqID = Date.now();
     try {
-        console.log('Incoming save-employee body:', req.body);
-        const { photoPath, fullName, ...otherData } = req.body;
+        const { fullName, photoPath, ...otherData } = req.body;
+        console.log(`[Backend ${reqID}] START save: ${fullName}`);
         let finalPhotoPath = "";
 
         if (photoPath && photoPath.startsWith('data:image')) {
             try {
+                // Upload Base64 directly to Cloudinary with compression
                 const result = await cloudinary.uploader.upload(photoPath, {
                     folder: 'id_cards',
-                    public_id: `emp_${fullName.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`
+                    public_id: `emp_${fullName.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
+                    quality: 'auto:good',
+                    fetch_format: 'auto'
                 });
                 finalPhotoPath = result.secure_url;
             } catch (cloudErr) {
-                console.error('Cloudinary upload failed, falling back to local:', cloudErr);
-                const base64Data = photoPath.replace(/^data:image\/\w+;base64,/, "");
-                const buffer = Buffer.from(base64Data, 'base64');
-                const filename = `emp_${fullName.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.png`;
-                const filepath = path.join(uploadsDir, filename);
-                fs.writeFileSync(filepath, buffer);
-                finalPhotoPath = `/uploads/${filename}`;
+                console.error('CRITICAL: Cloudinary upload failed:', cloudErr.message);
+                return res.status(500).json({ error: 'Failed to upload photo to cloud storage.' });
             }
         }
 
@@ -113,8 +118,10 @@ app.post('/api/save-employee', async (req, res) => {
         });
 
         await newEmployee.save();
+        console.log(`[Backend ${reqID}] SUCCESS save: ${fullName}`);
         res.status(201).json({ message: 'Employee saved successfully!' });
     } catch (err) {
+        console.error(`[Backend ${reqID}] ERROR:`, err.message);
         res.status(400).json({ error: err.message });
     }
 });
@@ -197,5 +204,5 @@ app.get('/api/config', (req, res) => {
     });
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// app.listen is now inside the mongoose connection block above
 
