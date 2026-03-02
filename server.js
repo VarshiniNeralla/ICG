@@ -126,6 +126,7 @@ app.post('/api/save-employee', async (req, res) => {
             photoPath: finalPhotoPath
         });
 
+        console.log(`[Backend ${reqID}] Final URL to be saved: ${finalPhotoPath}`);
         await newEmployee.save();
         console.log(`[Backend ${reqID}] SUCCESS save: ${fullName}`);
         res.status(201).json({ message: 'Employee saved successfully!' });

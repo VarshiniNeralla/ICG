@@ -152,6 +152,10 @@ async function loadRecords(from, to) {
 
         const resp = await fetch(url);
         const records = await resp.json();
+        console.log('--- ADMIN RECORDS AUDIT ---');
+        console.log('Total records received:', records.length);
+        if (records.length > 0) console.log('Sample record image field:', records[0].photoPath);
+
         const tbody = document.getElementById('recordsBody');
         tbody.innerHTML = '';
 
@@ -160,8 +164,19 @@ async function loadRecords(from, to) {
             return;
         }
 
-        records.forEach(r => {
-            const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API}${r.photoPath}`) : '';
+        records.forEach((r, idx) => {
+            // FIX: Ensure photoSrc handles Cloudinary URLs and local paths robustly
+            let photoSrc = "";
+            if (r.photoPath) {
+                if (r.photoPath.startsWith('http')) {
+                    photoSrc = r.photoPath;
+                } else {
+                    // Normalize backslashes (if any) and ensure path starts correctly
+                    const cleanPath = r.photoPath.replace(/\\/g, '/');
+                    const separator = cleanPath.startsWith('/') ? '' : '/';
+                    photoSrc = `${API}${separator}${cleanPath}`;
+                }
+            }
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td>${photoSrc ? `<img src="${photoSrc}" class="record-photo" alt="Photo" />` : '<span style="color:var(--text-light)">N/A</span>'}</td>
