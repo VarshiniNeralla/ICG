@@ -342,8 +342,9 @@ function loadSettings() {
 
 // Enable custom days input when custom is selected
 document.querySelectorAll('input[name="retention"]').forEach(r => {
-    r.onchange = () => {
+    r.onclick = () => {
         document.getElementById('customDays').disabled = r.value !== 'custom';
+        if (r.value === 'custom') document.getElementById('customDays').focus();
     };
 });
 
@@ -359,7 +360,11 @@ document.getElementById('saveRetention').onclick = () => {
     }
 
     localStorage.setItem('ep_retention', val);
-    document.getElementById('retentionStatus').textContent = 'Settings saved successfully.';
+    document.getElementById('retentionStatus').textContent = 'Settings saved and applied!';
+
+    // Auto-refresh the records with the new retention period
+    loadRecords();
+
     setTimeout(() => document.getElementById('retentionStatus').textContent = '', 3000);
 };
 
