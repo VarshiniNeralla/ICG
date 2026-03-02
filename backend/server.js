@@ -1,13 +1,17 @@
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const fs = require('fs');
+const path = require('path');
 const cloudinary = require('cloudinary').v2;
 
 const app = express();
 require('dotenv').config();
 
-// Configuration
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/idCardDB";
 
-// Cloudinary Setup
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
@@ -17,7 +21,6 @@ cloudinary.config({
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
 
-// 1. CSP Header for Development
 app.use((req, res, next) => {
     res.setHeader(
         "Content-Security-Policy",
@@ -31,15 +34,13 @@ if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir);
 }
 
-// 2. Serve Static Files
-app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname, '../frontend')));
 app.use('/uploads', express.static(uploadsDir));
 
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.sendFile(path.join(__dirname, '../frontend', 'index.html'));
 });
 
-// Avoid 404 for favicon
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 mongoose.connect(MONGO_URI)
@@ -70,13 +71,12 @@ const Employee = mongoose.model('Employee', EmployeeSchema);
 
 app.post('/api/save-employee', async (req, res) => {
     try {
-        console.log('Incoming save-employee body:', req.body); // LOG BODY
+        console.log('Incoming save-employee body:', req.body);
         const { photoPath, fullName, ...otherData } = req.body;
         let finalPhotoPath = "";
 
         if (photoPath && photoPath.startsWith('data:image')) {
             try {
-                // Upload to Cloudinary for production/Vercel
                 const result = await cloudinary.uploader.upload(photoPath, {
                     folder: 'id_cards',
                     public_id: `emp_${fullName.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`
@@ -84,7 +84,6 @@ app.post('/api/save-employee', async (req, res) => {
                 finalPhotoPath = result.secure_url;
             } catch (cloudErr) {
                 console.error('Cloudinary upload failed, falling back to local:', cloudErr);
-                // Fallback to local file for development
                 const base64Data = photoPath.replace(/^data:image\/\w+;base64,/, "");
                 const buffer = Buffer.from(base64Data, 'base64');
                 const filename = `emp_${fullName.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.png`;
@@ -120,9 +119,8 @@ app.post('/api/save-employee', async (req, res) => {
     }
 });
 
-// ---- ADMIN API ----
+//Admin Panel 
 
-// GET all employees (with optional date filter)
 app.get('/api/employees', async (req, res) => {
     try {
         const { from, to } = req.query;

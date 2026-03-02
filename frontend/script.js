@@ -1,14 +1,7 @@
 'use strict';
 
-/**
- * ENTRY PASS – SECURE GENERATOR v2.0
- * 3-Step Carousel Logic (Personal → Employment → Photo)
- */
-
-// 1. CONFIG & STATE
 const CR80_W = 638;
 const CR80_H = 1011;
-// Dynamically find the backend on port 5000 even if frontend is on 3000
 const API_BASE = window.location.protocol + '//' + window.location.hostname + ':5000';
 
 const SITE_CONFIG = {
@@ -17,7 +10,6 @@ const SITE_CONFIG = {
     'Vipina': { tint: 'rgba(220,53,69,0.12)', code: 'VIPINA' }
 };
 
-// Help sync lists from admin manage panel
 const STORAGE_KEYS = { sites: 'ep_sites', contractors: 'ep_contractors', roles: 'ep_roles' };
 const getStoredList = (key) => {
     const data = localStorage.getItem(STORAGE_KEYS[key]);
@@ -55,9 +47,8 @@ let capturedPhotoDataURL = null;
 let currentStep = 1;
 let batchQueue = [];
 let stream = null;
-let isSaved = false; // Prevents duplicate saves for the same entry
+let isSaved = false;
 
-// DOM
 const loginScreen = document.getElementById('loginScreen');
 const mainApp = document.getElementById('mainApp');
 const loginForm = document.getElementById('loginForm');
@@ -100,7 +91,6 @@ const btnClearBatch = document.getElementById('btnClearBatch');
 const btnPrintBatch = document.getElementById('btnPrintBatch');
 const batchPrintArea = document.getElementById('batchPrintArea');
 
-// 2. SESSION & LOGIN
 function initSession() {
     const savedOp = localStorage.getItem('ep_operator');
     if (savedOp) {
@@ -141,7 +131,6 @@ function setDefaultDates() {
     const nextYearStr = nextYear.toISOString().split('T')[0];
 
     if (issueDateInput) {
-        // Issue date is a text input, so we can format it immediately
         issueDateInput.value = formatDate(today.toISOString());
     }
     if (validityInput) validityInput.value = nextYearStr;
@@ -154,7 +143,6 @@ btnLogout.onclick = () => {
     window.location.reload();
 };
 
-// 3. UTILS
 const getFormData = () => ({
     fullName: document.getElementById('fullName').value.trim(),
     aadhar: document.getElementById('aadhar').value.trim(),
@@ -182,7 +170,6 @@ const formatDate = (d) => {
     return `${day}/${month}/${year}`;
 };
 
-// Validation
 function validateStep(step) {
     const data = getFormData();
     if (step === 1) {
@@ -201,7 +188,6 @@ function validateStep(step) {
     return true;
 }
 
-// 4. NAVIGATION
 function goToStep(step) {
     currentStep = step;
     const track = document.getElementById('carouselTrack');
@@ -214,7 +200,6 @@ function goToStep(step) {
     });
 }
 
-// 5. CAMERA
 async function startCamera() {
     try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 800, height: 1000 } });
@@ -230,7 +215,6 @@ async function startCamera() {
 function capturePhoto() {
     if (!video.srcObject) return;
     const vw = video.videoWidth, vh = video.videoHeight;
-    // Set both to match camera exactly
     croppedPhoto.width = vw;
     croppedPhoto.height = vh;
     croppedPhoto.getContext('2d').drawImage(video, 0, 0, vw, vh);
@@ -244,7 +228,6 @@ function capturePhoto() {
     btnStart.disabled = false;
 }
 
-// 6. RENDER
 function drawWatermark(ctx) {
     const text = `${operator.site.toUpperCase()} – ENTRY PASS – ${new Date().getFullYear()}`;
     const tint = SITE_CONFIG[operator.site]?.tint || 'rgba(0,0,0,0.06)';
@@ -267,7 +250,6 @@ async function renderCard() {
     ctx.strokeStyle = '#0d2240'; ctx.lineWidth = 4;
     ctx.strokeRect(2, 2, CR80_W - 4, CR80_H - 4);
 
-    // Contractor Name (Bigger)
     ctx.textAlign = 'center'; ctx.font = 'bold 36px Inter'; ctx.fillStyle = '#1a3c6e';
     ctx.fillText(data.contractor.toUpperCase(), CR80_W / 2, 60);
 
@@ -279,12 +261,10 @@ async function renderCard() {
         const ph = await loadImage(capturedPhotoDataURL);
         ctx.save();
         ctx.beginPath(); ctx.roundRect(phX, phY, phW, phH, 15); ctx.clip();
-        // Draw the full captured photo into the frame, stretching if needed to fit the ID area
         ctx.drawImage(ph, phX, phY, phW, phH);
         ctx.restore();
     }
 
-    // Name (Medium) and Designation (Small)
     ctx.textAlign = 'center'; ctx.fillStyle = '#0d2240';
     ctx.font = 'bold 38px Inter'; ctx.fillText(data.fullName.toUpperCase(), CR80_W / 2, phY + phH + 75);
     ctx.font = 'bold 24px Inter'; ctx.fillStyle = '#c8a45a';
@@ -329,7 +309,6 @@ async function saveToBackend() {
     }
 }
 
-// 7. BATCH
 function updateBatchUI() {
     batchList.innerHTML = '';
     batchQueue.forEach(item => {
@@ -357,9 +336,8 @@ function nextEntry() {
     goToStep(1);
 }
 
-// 8. EVENTS
 document.addEventListener('DOMContentLoaded', () => {
-    initSession(); // Recover session on load
+    initSession();
 
     dobInput.onchange = () => {
         const b = new Date(dobInput.value), t = new Date();
@@ -368,7 +346,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const finalAge = a > 0 ? a : 0;
         ageInput.value = finalAge;
 
-        // Visual feedback for under 18
         if (finalAge < 18 && dobInput.value) {
             ageInput.style.color = '#ef4444';
             ageInput.style.borderColor = '#ef4444';
@@ -388,7 +365,6 @@ document.addEventListener('DOMContentLoaded', () => {
     btnRetake.onclick = () => { capturedPhotoDataURL = null; startCamera(); };
 
     btnGenerate.onclick = async () => {
-        // Final verification of all steps
         const v1 = validateStep(1); if (v1 !== true) return (goToStep(1), showAlert(v1));
         const v2 = validateStep(2); if (v2 !== true) return (goToStep(2), showAlert(v2));
         if (!capturedPhotoDataURL) return showAlert("Photo required.");
@@ -396,7 +372,6 @@ document.addEventListener('DOMContentLoaded', () => {
         btnGenerate.disabled = true;
         await renderCard();
 
-        // Auto-save to database immediately on generation
         if (!isSaved) {
             await saveToBackend();
             isSaved = true;
@@ -426,7 +401,6 @@ document.addEventListener('DOMContentLoaded', () => {
     btnAddToBatch.onclick = async () => {
         if (batchQueue.length >= 9) return showAlert('Batch full.');
 
-        // Save to backend before adding to batch if not already saved
         if (!isSaved) {
             await saveToBackend();
             isSaved = true;
@@ -450,11 +424,10 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
         Promise.all(promises).then(() => {
-            setTimeout(() => window.print(), 500); // Small buffer for rendering
+            setTimeout(() => window.print(), 500);
         });
     };
 
-    // Modal Controls
     document.getElementById('closeAlert').onclick = () => {
         document.getElementById('customAlert').style.display = 'none';
     };
