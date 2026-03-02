@@ -1,12 +1,19 @@
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const bodyParser = require('body-parser');
-const fs = require('fs');
-const path = require('path');
-require('dotenv').config();
+const cloudinary = require('cloudinary').v2;
 
 const app = express();
+require('dotenv').config();
+
+// Configuration
+const PORT = process.env.PORT || 5000;
+const MONGO_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/idCardDB";
+
+// Cloudinary Setup
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
 
@@ -35,9 +42,8 @@ app.get('/', (req, res) => {
 // Avoid 404 for favicon
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-const mongoURI = "mongodb://localhost:27017/idCardDB";
-mongoose.connect(mongoURI)
-    .then(() => console.log('Connected to MongoDB via Compass'))
+mongoose.connect(MONGO_URI)
+    .then(() => console.log('Connected to MongoDB'))
     .catch(err => console.error('Connection error:', err));
 
 const EmployeeSchema = new mongoose.Schema({
@@ -69,13 +75,23 @@ app.post('/api/save-employee', async (req, res) => {
         let finalPhotoPath = "";
 
         if (photoPath && photoPath.startsWith('data:image')) {
-            const base64Data = photoPath.replace(/^data:image\/\w+;base64,/, "");
-            const buffer = Buffer.from(base64Data, 'base64');
-            const filename = `emp_${fullName.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.png`;
-            const filepath = path.join(uploadsDir, filename);
-
-            fs.writeFileSync(filepath, buffer);
-            finalPhotoPath = `/uploads/${filename}`;
+            try {
+                // Upload to Cloudinary for production/Vercel
+                const result = await cloudinary.uploader.upload(photoPath, {
+                    folder: 'id_cards',
+                    public_id: `emp_${fullName.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`
+                });
+                finalPhotoPath = result.secure_url;
+            } catch (cloudErr) {
+                console.error('Cloudinary upload failed, falling back to local:', cloudErr);
+                // Fallback to local file for development
+                const base64Data = photoPath.replace(/^data:image\/\w+;base64,/, "");
+                const buffer = Buffer.from(base64Data, 'base64');
+                const filename = `emp_${fullName.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.png`;
+                const filepath = path.join(uploadsDir, filename);
+                fs.writeFileSync(filepath, buffer);
+                finalPhotoPath = `/uploads/${filename}`;
+            }
         }
 
         const newEmployee = new Employee({
@@ -176,6 +192,12 @@ app.get('/api/stats', async (req, res) => {
     }
 });
 
-const PORT = 5000;
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+// Endpoint to provide public config to frontend if needed
+app.get('/api/config', (req, res) => {
+    res.json({
+        adminUser: process.env.ADMIN_USER || 'admin'
+    });
+});
+
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
