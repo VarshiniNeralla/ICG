@@ -40,6 +40,15 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Explicit route for Admin Panel to prevent 404s on cloud platforms like Render
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+app.get('/admin.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 // Only start the server after a successful DB connection
