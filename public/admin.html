@@ -109,7 +109,22 @@
                 </div>
                 <button id="btnApplyFilter" class="btn btn-primary btn-sm">Filter</button>
                 <button id="btnResetFilter" class="btn btn-secondary btn-sm">Reset</button>
-                <button id="btnExportExcel" class="btn btn-success btn-sm" style="margin-left:auto;">Export
+                <div class="filter-group" style="margin-left:auto;">
+                    <label>Sort By</label>
+                    <select id="sortRecords" style="padding:0.4rem 0.5rem; font-size:0.78rem; min-width:140px;">
+                        <option value="latest">Latest First</option>
+                        <option value="oldest">Oldest First</option>
+                        <option value="age_asc">Age (Low → High)</option>
+                        <option value="age_desc">Age (High → Low)</option>
+                        <option value="name_az">Name (A → Z)</option>
+                        <option value="name_za">Name (Z → A)</option>
+                        <option value="gender">Gender</option>
+                        <option value="designation">Designation</option>
+                        <option value="site">Site</option>
+                        <option value="camp">Camp</option>
+                    </select>
+                </div>
+                <button id="btnExportExcel" class="btn btn-success btn-sm">Export
                     Excel</button>
             </div>
             <div class="table-wrap">

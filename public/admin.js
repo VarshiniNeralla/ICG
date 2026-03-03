@@ -121,6 +121,91 @@ function renderBarChart(containerId, dataObj) {
 }
 
 // ------ RECORDS ------
+let currentRecords = []; // Store fetched records for client-side sorting
+
+function sortAndRenderRecords() {
+    const sortKey = document.getElementById('sortRecords').value;
+    const sorted = [...currentRecords];
+
+    switch (sortKey) {
+        case 'latest':
+            sorted.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+            break;
+        case 'oldest':
+            sorted.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+            break;
+        case 'age_asc':
+            sorted.sort((a, b) => (parseInt(a.age) || 0) - (parseInt(b.age) || 0));
+            break;
+        case 'age_desc':
+            sorted.sort((a, b) => (parseInt(b.age) || 0) - (parseInt(a.age) || 0));
+            break;
+        case 'name_az':
+            sorted.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''));
+            break;
+        case 'name_za':
+            sorted.sort((a, b) => (b.fullName || '').localeCompare(a.fullName || ''));
+            break;
+        case 'gender':
+            sorted.sort((a, b) => (a.gender || '').localeCompare(b.gender || ''));
+            break;
+        case 'designation':
+            sorted.sort((a, b) => (a.designation || '').localeCompare(b.designation || ''));
+            break;
+        case 'site':
+            sorted.sort((a, b) => (a.site || '').localeCompare(b.site || ''));
+            break;
+        case 'camp':
+            sorted.sort((a, b) => (a.laborCamp || '').localeCompare(b.laborCamp || ''));
+            break;
+    }
+
+    renderRecordsTable(sorted);
+}
+
+function renderRecordsTable(records) {
+    const tbody = document.getElementById('recordsBody');
+    tbody.innerHTML = '';
+
+    if (records.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="17" style="text-align:center; padding:2rem; color:var(--text-light);">No records found</td></tr>';
+        return;
+    }
+
+    records.forEach((r) => {
+        let photoSrc = "";
+        if (r.photoPath) {
+            if (r.photoPath.startsWith('http')) {
+                photoSrc = r.photoPath;
+            } else {
+                const cleanPath = r.photoPath.replace(/\\/g, '/');
+                const separator = cleanPath.startsWith('/') ? '' : '/';
+                photoSrc = `${API}${separator}${cleanPath}`;
+            }
+        }
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+                <td>${photoSrc ? `<img src="${photoSrc}" class="record-photo" alt="Photo" />` : '<span style="color:var(--text-light)">N/A</span>'}</td>
+                <td>${r.fullName || '---'}</td>
+                <td>${r.aadhar || '---'}</td>
+                <td>${r.age || '---'}</td>
+                <td>${r.gender || '---'}</td>
+                <td>${formatDate(r.dob)}</td>
+                <td>${r.bloodGroup || '---'}</td>
+                <td>${r.contractor || '---'}</td>
+                <td>${r.laborCamp || '---'}</td>
+                <td>${r.designation || '---'}</td>
+                <td>${r.contact || '---'}</td>
+                <td>${r.site || 'EMPTY'}</td>
+                <td>${r.operator || 'EMPTY'}</td>
+                <td>${formatDate(r.doi)}</td>
+                <td>${formatDate(r.validity)}</td>
+                <td>${formatDate(r.issueDate)}</td>
+                <td><button class="btn-delete" onclick="deleteRecord('${r._id}')">Delete</button></td>`;
+        tbody.appendChild(tr);
+    });
+}
+
 async function loadRecords(from, to) {
     try {
         let url = `${API}/api/employees`;
@@ -151,53 +236,12 @@ async function loadRecords(from, to) {
         if (params.length) url += '?' + params.join('&');
 
         const resp = await fetch(url);
-        const records = await resp.json();
+        currentRecords = await resp.json();
         console.log('--- ADMIN RECORDS AUDIT ---');
-        console.log('Total records received:', records.length);
-        if (records.length > 0) console.log('Sample record image field:', records[0].photoPath);
+        console.log('Total records received:', currentRecords.length);
+        if (currentRecords.length > 0) console.log('Sample record image field:', currentRecords[0].photoPath);
 
-        const tbody = document.getElementById('recordsBody');
-        tbody.innerHTML = '';
-
-        if (records.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="17" style="text-align:center; padding:2rem; color:var(--text-light);">No records found</td></tr>';
-            return;
-        }
-
-        records.forEach((r, idx) => {
-            // FIX: Ensure photoSrc handles Cloudinary URLs and local paths robustly
-            let photoSrc = "";
-            if (r.photoPath) {
-                if (r.photoPath.startsWith('http')) {
-                    photoSrc = r.photoPath;
-                } else {
-                    // Normalize backslashes (if any) and ensure path starts correctly
-                    const cleanPath = r.photoPath.replace(/\\/g, '/');
-                    const separator = cleanPath.startsWith('/') ? '' : '/';
-                    photoSrc = `${API}${separator}${cleanPath}`;
-                }
-            }
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td>${photoSrc ? `<img src="${photoSrc}" class="record-photo" alt="Photo" />` : '<span style="color:var(--text-light)">N/A</span>'}</td>
-                <td>${r.fullName || '---'}</td>
-                <td>${r.aadhar || '---'}</td>
-                <td>${r.age || '---'}</td>
-                <td>${r.gender || '---'}</td>
-                <td>${formatDate(r.dob)}</td>
-                <td>${r.bloodGroup || '---'}</td>
-                <td>${r.contractor || '---'}</td>
-                <td>${r.laborCamp || '---'}</td>
-                <td>${r.designation || '---'}</td>
-                <td>${r.contact || '---'}</td>
-                <td>${r.site || 'EMPTY'}</td>
-                <td>${r.operator || 'EMPTY'}</td>
-                <td>${formatDate(r.doi)}</td>
-                <td>${formatDate(r.validity)}</td>
-                <td>${formatDate(r.issueDate)}</td>
-                <td><button class="btn-delete" onclick="deleteRecord('${r._id}')">Delete</button></td>`;
-            tbody.appendChild(tr);
-        });
+        sortAndRenderRecords();
     } catch (err) {
         console.error('Records load failed:', err);
     }
@@ -223,7 +267,13 @@ document.getElementById('btnApplyFilter').onclick = () => {
 document.getElementById('btnResetFilter').onclick = () => {
     document.getElementById('filterFrom').value = '';
     document.getElementById('filterTo').value = '';
+    document.getElementById('sortRecords').value = 'latest';
     loadRecords();
+};
+
+// Sort dropdown change handler
+document.getElementById('sortRecords').onchange = () => {
+    sortAndRenderRecords();
 };
 
 document.getElementById('btnExportExcel').onclick = () => {

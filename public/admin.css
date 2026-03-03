@@ -295,17 +295,42 @@ body {
     background: white;
     border-radius: 16px;
     border: 1px solid var(--border);
-    overflow-x: auto;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+    max-height: 70vh;
+}
+
+.table-wrap::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.table-wrap::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+
+.table-wrap::-webkit-scrollbar-thumb {
+    background: #94a3b8;
+    border-radius: 5px;
+}
+
+.table-wrap::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
 }
 
 table {
     width: 100%;
+    min-width: 1400px;
     border-collapse: collapse;
     font-size: 0.8rem;
 }
 
 thead {
     background: #f8fafc;
+    position: sticky;
+    top: 0;
+    z-index: 10;
 }
 
 th {
