@@ -267,8 +267,8 @@ function drawWatermark(ctx) {
     const lastLetter = siteName.charAt(siteName.length - 1).toUpperCase();
     const watermarkText = `⟁ ${firstLetter} ✦ ${lastLetter} ⟁`;
 
-    // Dark navy blue watermark (e.g. #0d2240 with low opacity)
-    const tint = 'rgba(13, 34, 64, 0.30)';
+    // Dark navy blue watermark, lighter, recognizable but not overpowering opacity
+    const tint = 'rgba(13, 34, 64, 0.22)';
 
     ctx.save();
 
@@ -277,7 +277,7 @@ function drawWatermark(ctx) {
     const dynamicRotation = -25 - (code.length % 10); // Subtle variation between 25-35 degrees
     ctx.rotate(dynamicRotation * Math.PI / 180);
 
-    ctx.font = 'bold 36px Inter';
+    ctx.font = 'bold 46px Inter'; // Larger watermark
     ctx.fillStyle = tint;
 
     // STAGGERED DIAMOND GRID: More unique and secure 
@@ -306,48 +306,99 @@ async function renderCard() {
     // Draw the border inset by 15px on all sides to prevent edge clipping during print
     ctx.strokeRect(15, 15, CR80_W - 30, CR80_H - 30);
 
+    // Header Background Box Setup (Aesthetic ID card structure)
+    ctx.fillStyle = '#f0f4f8';
+    ctx.fillRect(15, 15, CR80_W - 30, 110);
+    ctx.beginPath();
+    ctx.moveTo(15, 125);
+    ctx.lineTo(CR80_W - 15, 125);
+    ctx.stroke();
+
     ctx.textAlign = 'center'; ctx.font = '800 66px Inter'; ctx.fillStyle = '#1a3c6e';
-    ctx.fillText(data.contractor.toUpperCase(), CR80_W / 2, 90);
+    // Constrain the contractor name max-width to 720px so it never collides with the 150px LC block on the right edge
+    ctx.fillText(data.contractor.toUpperCase(), CR80_W / 2, 90, 720);
 
-    ctx.textAlign = 'right'; ctx.font = 'bold 46px Inter'; ctx.fillStyle = '#000000';
-    // Shift LC farther left by 30px so it perfectly clears the 15px border inset and fits cleanly
-    if (data.laborCamp === 'LC') ctx.fillText('LC', CR80_W - 85, 90);
+    ctx.textAlign = 'right'; ctx.font = 'bold 46px Inter';
+    if (data.laborCamp === 'LC') {
+        // Draw a solid black box for the LC badge in top right corner to make it very distinct
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(CR80_W - 165, 15, 150, 110);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText('LC', CR80_W - 65, 90);
+    }
 
-    const phY = 130, phW = 435, phH = 575, phX = (CR80_W - phW) / 2;
+    const phY = 160, phW = 435, phH = 575, phX = (CR80_W - phW) / 2;
     if (capturedPhotoDataURL) {
         const ph = await loadImage(capturedPhotoDataURL);
         ctx.save();
         ctx.beginPath(); ctx.roundRect(phX, phY, phW, phH, 15); ctx.clip();
         ctx.drawImage(ph, phX, phY, phW, phH);
         ctx.restore();
+
+        // Add border to photo itself for more structure
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(phX, phY, phW, phH);
     }
 
     ctx.textAlign = 'center'; ctx.fillStyle = '#0d2240';
-    ctx.font = 'bold 58px Inter'; ctx.fillText(data.fullName.toUpperCase(), CR80_W / 2, phY + phH + 95);
-    ctx.font = 'bold 44px Inter'; ctx.fillStyle = '#000000';
-    ctx.fillText(data.designation.toUpperCase(), CR80_W / 2, phY + phH + 160);
+    ctx.font = 'bold 58px Inter'; ctx.fillText(data.fullName.toUpperCase(), CR80_W / 2, phY + phH + 85);
 
-    const ty = phY + phH + 250;
+    // Role styling upgrade - badge style text
+    ctx.font = '800 44px Inter'; ctx.fillStyle = '#000000'; // Reverted to bold black
+    ctx.fillText(data.designation.toUpperCase(), CR80_W / 2, phY + phH + 150);
+
+    // Separator line before details
+    ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(65, phY + phH + 200); ctx.lineTo(CR80_W - 65, phY + phH + 200); ctx.stroke();
+
+    const ty = phY + phH + 265;
     const items = [
-        { l: 'AADHAR', v: data.aadhar, x: 65 }, { l: 'GENDER', v: data.gender, x: 615 },
-        { l: 'DOB/AGE', v: `${formatDate(data.dob)} / ${data.age}`, x: 65 }, { l: 'BLOOD GRP', v: data.bloodGroup, x: 615 },
-        { l: 'IND. DATE', v: formatDate(data.doi), x: 65 }, { l: 'VALIDITY', v: formatDate(data.validity), x: 615 },
-        { l: 'ISSUE DATE', v: formatDate(data.issueDate), x: 65 }, { l: 'CONTACT', v: data.contact, x: 615 }
+        { l: 'AADHAR', v: data.aadhar, x: 65 }, { l: 'GENDER', v: data.gender, x: 620 },
+        { l: 'D.O.B-AGE', v: `${formatDate(data.dob)}-${data.age}y`, x: 65 }, { l: 'BLOOD GROUP', v: data.bloodGroup, x: 620 },
+        { l: 'D.O.I', v: formatDate(data.doi), x: 65 }, { l: 'VALIDITY', v: formatDate(data.validity), x: 620 },
+        { l: 'ISSUE DATE', v: formatDate(data.issueDate), x: 65 }, { l: 'CONTACT', v: data.contact, x: 620 }
     ];
 
     ctx.textAlign = 'left';
     items.forEach((item, i) => {
         const row = Math.floor(i / 2);
-        const yCoord = ty + (row * 135);
-        ctx.font = 'bold 46px Inter'; ctx.fillStyle = '#000000'; ctx.fillText(item.l, item.x, yCoord);
-        ctx.font = '800 66px Inter'; ctx.fillStyle = '#000000'; ctx.fillText(item.v, item.x, yCoord + 65);
+        const yCoord = ty + (row * 130);
+
+        // Use a stark slate color for labels to declutter visual weight from the black max-bold values
+        ctx.font = 'bold 36px Inter'; ctx.fillStyle = '#334155'; // Darker gray for labels
+        ctx.fillText(item.l, item.x, yCoord);
+        ctx.font = '800 58px Inter'; ctx.fillStyle = '#000000'; ctx.fillText(item.v, item.x, yCoord + 55);
+
+        // Add subtle underline to each detail row for structure
+        if (i % 2 === 0 && row < 3) {
+            ctx.strokeStyle = '#f1f5f9'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(65, yCoord + 80); ctx.lineTo(CR80_W - 65, yCoord + 80); ctx.stroke();
+        }
     });
 }
 
+// ── Non-blocking toast notification ──────────────────────────────────────────
+function showToast(msg, type = 'warning') {
+    const container = document.getElementById('toastContainer');
+    if (!container) return console.warn('Toast container not found');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = msg;
+    container.appendChild(toast);
+    // Trigger animation
+    requestAnimationFrame(() => toast.classList.add('toast-visible'));
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        toast.classList.remove('toast-visible');
+        setTimeout(() => toast.remove(), 400);
+    }, 5000);
+}
+
+// ── Fault-tolerant save (fire-and-forget, never blocks UI) ───────────────────
 async function saveToBackend() {
-    if (isSaving || isSaved) return; // Prevention lock
+    if (isSaving || isSaved) return;
     isSaving = true;
-    isSaved = true; // Mark as saved immediately to prevent other buttons from triggering it
 
     const data = getFormData();
     data.photoPath = capturedPhotoDataURL;
@@ -364,15 +415,21 @@ async function saveToBackend() {
             body: JSON.stringify(data)
         });
         const result = await resp.json();
-        if (!resp.ok) {
-            isSaved = false; // Back to false on error 
-            throw new Error(result.error || 'Server error');
+
+        // Backend now always returns 200, but may include warnings
+        isSaved = true;
+
+        if (result.warnings && result.warnings.length > 0) {
+            console.warn('Backend warnings:', result.warnings);
+            showToast('⚠ Warning: ' + result.warnings[0], 'warning');
+        } else {
+            console.log('Saved to backend success:', result);
         }
-        console.log('Saved to backend success:', result);
     } catch (err) {
-        isSaved = false; // Allow retry on failure
+        // Network error, server down, etc. — NEVER block the operator
         console.error('Backend save failed:', err.message);
-        showAlert("Save failed: " + err.message);
+        showToast('⚠ Record not saved to cloud, but card generated locally.', 'warning');
+        isSaved = true; // Mark as "handled" so UI isn't blocked
     } finally {
         isSaving = false;
         console.log('--- Submission Request End ---');
@@ -385,7 +442,12 @@ function updateBatchUI() {
         const img = new Image(); img.src = item.snap; img.className = 'batch-item';
         batchList.appendChild(img);
     });
-    localStorage.setItem('ep_batch', JSON.stringify(batchQueue)); // Persist batch
+    // Persist batch to localStorage if possible (may fail silently if quota exceeded)
+    try {
+        localStorage.setItem('ep_batch', JSON.stringify(batchQueue));
+    } catch (e) {
+        console.warn('Batch too large for localStorage, keeping in memory only.');
+    }
     document.querySelector('.batch-card .section-title').textContent = `Batch Queue (${batchQueue.length}/9)`;
     btnPrintBatch.disabled = batchQueue.length === 0;
 }
@@ -459,52 +521,56 @@ document.addEventListener('DOMContentLoaded', () => {
 
         await renderCard();
 
-        // Show buttons immediately so the user can download/print while it saves in background
+        // Show card and ALL buttons immediately — never wait for backend
         if (canvasEmpty) canvasEmpty.style.display = 'none';
         idCard.style.display = 'block';
         previewActions.style.display = 'flex';
-        btnGenerate.textContent = 'Saving to Cloud...';
-
-        if (!isSaved) {
-            await saveToBackend();
-        }
 
         btnGenerate.disabled = false;
         btnGenerate.textContent = 'Generate Pass';
+
+        // Fire-and-forget: save to backend asynchronously, never blocking the operator
+        saveToBackend();
     };
 
-    btnDownload.onclick = async () => {
+    btnDownload.onclick = () => {
         const siteCode = (SITE_CONFIG[operator.site]?.code || operator.site.toUpperCase()).substring(0, 5);
-        if (!isSaved) await saveToBackend();
-        if (!isSaved) return; // Don't download if save failed
         const d = getFormData();
         const link = document.createElement('a');
-        link.download = `ENTRY_PASS_${siteCode}_${d.fullName.replace(/\s+/g, '_').toUpperCase()}.png`;
-        link.href = idCard.toDataURL('image/png'); link.click();
+        link.download = `ENTRY_PASS_${siteCode}_${d.fullName.replace(/\s+/g, '_').toUpperCase()}.jpg`;
+        link.href = idCard.toDataURL('image/jpeg', 0.95); link.click();
+        // Attempt save in background if not already done
+        if (!isSaved) saveToBackend();
     };
 
-    btnPrint.onclick = async () => {
-        if (!isSaved) await saveToBackend();
-        if (!isSaved) return;
-        document.getElementById('printImg').src = idCard.toDataURL('image/png');
+    btnPrint.onclick = () => {
+        document.getElementById('printImg').src = idCard.toDataURL('image/jpeg', 0.95);
         window.print();
+        // Attempt save in background if not already done
+        if (!isSaved) saveToBackend();
     };
 
-    btnAddToBatch.onclick = async () => {
+    btnAddToBatch.onclick = () => {
         if (isInBatch) {
             return showAlert("This card is already added to the batch! Move to 'Next Entry'.");
         }
         if (batchQueue.length >= 9) return showAlert('Batch full.');
 
-        if (!isSaved) {
-            await saveToBackend();
-        }
-        if (!isSaved) return;
+        // CRITICAL: Generate proxy thumbnail for batch queue (scaled down to fit localStorage)
+        const proxyCanvas = document.createElement('canvas');
+        proxyCanvas.width = CR80_W / 4.5;
+        proxyCanvas.height = CR80_H / 4.5;
+        const pCtx = proxyCanvas.getContext('2d');
+        pCtx.drawImage(idCard, 0, 0, proxyCanvas.width, proxyCanvas.height);
 
-        batchQueue.push({ snap: idCard.toDataURL('image/png') });
+        batchQueue.push({ snap: proxyCanvas.toDataURL('image/jpeg', 0.4) });
         isInBatch = true;
         updateBatchUI();
-        btnAddToBatch.style.display = 'none'; btnNextEntry.style.display = 'inline-flex';
+        btnAddToBatch.style.display = 'none';
+        btnNextEntry.style.display = 'inline-flex';
+
+        // Attempt save in background if not already done
+        if (!isSaved) saveToBackend();
     };
 
     btnNextEntry.onclick = nextEntry;

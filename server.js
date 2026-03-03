@@ -51,16 +51,26 @@ app.get('/admin.html', (req, res) => {
 
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-// Only start the server after a successful DB connection
+// ── Global Process Crash Guards ──────────────────────────────────────────────
+process.on('unhandledRejection', (reason) => {
+    console.error('[CRASH GUARD] Unhandled Promise Rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('[CRASH GUARD] Uncaught Exception:', err.message);
+});
+
+// Connect to MongoDB but do NOT crash if it fails — allow server to start
 mongoose.connect(DB_URI)
     .then(() => {
         console.log('Successfully connected to MongoDB Atlas');
-        app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
     })
     .catch(err => {
-        console.error('CRITICAL ERROR: Could not connect to MongoDB Atlas:', err.message);
-        process.exit(1);
+        console.error('WARNING: Could not connect to MongoDB Atlas:', err.message);
+        console.error('Server will continue running. Database operations will fail gracefully.');
     });
+
+// Start server independently of DB connection
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
 const EmployeeSchema = new mongoose.Schema({
     fullName: String,
@@ -86,14 +96,18 @@ const Employee = mongoose.model('Employee', EmployeeSchema);
 
 app.post('/api/save-employee', async (req, res) => {
     const reqID = Date.now();
+    let cloudinarySuccess = true;
+    let mongoSuccess = true;
+    const warnings = [];
+
     try {
         const { fullName, photoPath, ...otherData } = req.body;
         console.log(`[Backend ${reqID}] START save: ${fullName}`);
-        let finalPhotoPath = "";
+        let finalPhotoPath = null;
 
+        // ── Cloudinary Upload (non-blocking) ─────────────────────────────────
         if (photoPath && photoPath.startsWith('data:image')) {
             try {
-                // Upload Base64 directly to Cloudinary with compression
                 const result = await cloudinary.uploader.upload(photoPath, {
                     folder: 'id_cards',
                     public_id: `emp_${fullName.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`,
@@ -102,37 +116,61 @@ app.post('/api/save-employee', async (req, res) => {
                 });
                 finalPhotoPath = result.secure_url;
             } catch (cloudErr) {
-                console.error('CRITICAL: Cloudinary upload failed:', cloudErr.message);
-                return res.status(500).json({ error: 'Failed to upload photo to cloud storage.' });
+                cloudinarySuccess = false;
+                console.error(`[Backend ${reqID}] Cloudinary upload FAILED:`, cloudErr.message);
+                warnings.push('Photo upload failed - record saved without cloud photo.');
+                // Continue execution — do NOT return error
             }
         }
 
-        const newEmployee = new Employee({
-            fullName: fullName || '',
-            aadhar: otherData.aadhar || '',
-            dob: otherData.dob || '',
-            age: otherData.age || '',
-            gender: otherData.gender || '',
-            bloodGroup: otherData.bloodGroup || '',
-            contractor: otherData.contractor || '',
-            laborCamp: otherData.laborCamp || '',
-            designation: otherData.designation || '',
-            contact: otherData.contact || '',
-            doi: otherData.doi || '',
-            validity: otherData.validity || '',
-            issueDate: otherData.issueDate || '',
-            site: otherData.site || '',
-            operator: otherData.operator || '',
-            photoPath: finalPhotoPath
+        // ── MongoDB Save (non-blocking) ──────────────────────────────────────
+        try {
+            const newEmployee = new Employee({
+                fullName: fullName || '',
+                aadhar: otherData.aadhar || '',
+                dob: otherData.dob || '',
+                age: otherData.age || '',
+                gender: otherData.gender || '',
+                bloodGroup: otherData.bloodGroup || '',
+                contractor: otherData.contractor || '',
+                laborCamp: otherData.laborCamp || '',
+                designation: otherData.designation || '',
+                contact: otherData.contact || '',
+                doi: otherData.doi || '',
+                validity: otherData.validity || '',
+                issueDate: otherData.issueDate || '',
+                site: otherData.site || '',
+                operator: otherData.operator || '',
+                photoPath: finalPhotoPath
+            });
+
+            console.log(`[Backend ${reqID}] Final URL to be saved: ${finalPhotoPath}`);
+            await newEmployee.save();
+            console.log(`[Backend ${reqID}] SUCCESS save: ${fullName}`);
+        } catch (dbErr) {
+            mongoSuccess = false;
+            console.error(`[Backend ${reqID}] MongoDB save FAILED:`, dbErr.message);
+            warnings.push('Database save failed - card generated but record not persisted.');
+            // Continue execution — do NOT throw
+        }
+
+        // ── Always return 200 to frontend ────────────────────────────────────
+        res.status(200).json({
+            message: mongoSuccess ? 'Employee saved successfully!' : 'Card generated (save had warnings).',
+            saved: mongoSuccess,
+            cloudinary: cloudinarySuccess,
+            warnings: warnings
         });
 
-        console.log(`[Backend ${reqID}] Final URL to be saved: ${finalPhotoPath}`);
-        await newEmployee.save();
-        console.log(`[Backend ${reqID}] SUCCESS save: ${fullName}`);
-        res.status(201).json({ message: 'Employee saved successfully!' });
     } catch (err) {
-        console.error(`[Backend ${reqID}] ERROR:`, err.message);
-        res.status(400).json({ error: err.message });
+        // Catch-all safety net — should never reach here, but if it does, still return 200
+        console.error(`[Backend ${reqID}] UNEXPECTED ERROR:`, err.message);
+        res.status(200).json({
+            message: 'Card generated (server encountered an issue).',
+            saved: false,
+            cloudinary: false,
+            warnings: ['Unexpected server error - card generated locally.']
+        });
     }
 });
 
@@ -249,4 +287,8 @@ setupMasterDataRoute('sites', ['Grava', 'Apas', 'Vipina']);
 setupMasterDataRoute('contractors', ['KLC PVT LTD', 'Sri Infra Works', 'Reddy Constructions']);
 setupMasterDataRoute('roles', ['Worker', 'IT Engineer', 'MEP', 'Safety', 'Quality', 'Others']);
 
-
+// ── Express Error-Catching Middleware (must be LAST) ─────────────────────────
+app.use((err, req, res, next) => {
+    console.error('[EXPRESS ERROR]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+});
