@@ -23,34 +23,51 @@ function getSiteSegments(code) {
     return [code.substring(0, mid), code.substring(mid)];
 }
 
-const STORAGE_KEYS = { sites: 'ep_sites', contractors: 'ep_contractors', roles: 'ep_roles' };
-const getStoredList = (key) => {
-    const data = localStorage.getItem(STORAGE_KEYS[key]);
-    return data ? JSON.parse(data) : [];
-};
-const seedDefaults = () => {
-    if (getStoredList('sites').length === 0) localStorage.setItem(STORAGE_KEYS.sites, JSON.stringify(['Grava', 'Apas', 'Vipina']));
-    if (getStoredList('contractors').length === 0) localStorage.setItem(STORAGE_KEYS.contractors, JSON.stringify(['KLC PVT LTD', 'Sri Infra Works', 'Reddy Constructions']));
-    if (getStoredList('roles').length === 0) localStorage.setItem(STORAGE_KEYS.roles, JSON.stringify(['Worker', 'IT Engineer', 'MEP', 'Safety', 'Quality', 'Others']));
-};
-seedDefaults();
+async function fetchList(endpoint) {
+    try {
+        const res = await fetch(`${API_BASE}${endpoint}`);
+        if (!res.ok) return [];
+        return await res.json();
+    } catch (e) {
+        console.error('Failed to fetch', endpoint, e);
+        return [];
+    }
+}
 
-function populateDropdowns() {
-    const sites = getStoredList('sites');
-    const contractors = getStoredList('contractors');
-    const roles = getStoredList('roles');
+async function populateDropdowns() {
+    const [sites, contractors, roles] = await Promise.all([
+        fetchList('/api/sites'),
+        fetchList('/api/contractors'),
+        fetchList('/api/roles')
+    ]);
 
     const sSel = document.getElementById('siteSelect');
     const cSel = document.getElementById('contractor');
     const dSel = document.getElementById('designation');
 
-    if (sSel) { sSel.innerHTML = '<option value="">Select Site</option>' + sites.map(s => `<option value="${s}">${s}</option>`).join(''); }
-    if (cSel) { cSel.innerHTML = '<option value="">Select Contractor</option>' + contractors.map(c => `<option value="${c}">${c}</option>`).join(''); }
-    if (dSel) { dSel.innerHTML = '<option value="">Select</option>' + roles.map(r => `<option value="${r}">${r}</option>`).join(''); }
+    // Preserve currently selected values to avoid overriding active selections
+    const curSite = sSel ? sSel.value : '';
+    const curContractor = cSel ? cSel.value : '';
+    const curRole = dSel ? dSel.value : '';
+
+    if (sSel) {
+        sSel.innerHTML = '<option value="">Select Site</option>' + sites.map(s => `<option value="${s}">${s}</option>`).join('');
+        if (sites.includes(curSite)) sSel.value = curSite;
+    }
+    if (cSel) {
+        cSel.innerHTML = '<option value="">Select Contractor</option>' + contractors.map(c => `<option value="${c}">${c}</option>`).join('');
+        if (contractors.includes(curContractor)) cSel.value = curContractor;
+    }
+    if (dSel) {
+        dSel.innerHTML = '<option value="">Select</option>' + roles.map(r => `<option value="${r}">${r}</option>`).join('');
+        if (roles.includes(curRole)) dSel.value = curRole;
+    }
 }
 
-window.addEventListener('storage', (e) => {
-    if (Object.values(STORAGE_KEYS).includes(e.key)) {
+// Implement auto-refresh logic
+setInterval(populateDropdowns, 30000); // refresh every 30 secs
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
         populateDropdowns();
     }
 });

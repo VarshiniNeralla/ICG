@@ -251,18 +251,32 @@ document.getElementById('btnExportExcel').onclick = () => {
 };
 
 // ------ MANAGE (CRUD) ------
-// Local storage for sites, contractors, roles
-function getList(key) {
-    const data = localStorage.getItem('ep_' + key);
-    return data ? JSON.parse(data) : [];
+
+async function getListAPI(key) {
+    try {
+        const res = await fetch(`${API}/api/${key}`);
+        if (!res.ok) return [];
+        return await res.json();
+    } catch (e) {
+        console.error(e);
+        return [];
+    }
 }
 
-function saveList(key, arr) {
-    localStorage.setItem('ep_' + key, JSON.stringify(arr));
+async function saveListAPI(key, arr) {
+    try {
+        await fetch(`${API}/api/${key}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: arr })
+        });
+    } catch (e) {
+        console.error(e);
+    }
 }
 
-function renderManageList(key, listId) {
-    const items = getList(key);
+async function renderManageList(key, listId) {
+    const items = await getListAPI(key);
     const ul = document.getElementById(listId);
     if (!ul) return;
     ul.innerHTML = '';
@@ -278,45 +292,40 @@ function renderManageList(key, listId) {
     });
 }
 
-function addItem(key, inputId, listId) {
+async function addItem(key, inputId, listId) {
     const input = document.getElementById(inputId);
     const val = input.value.trim();
     if (!val) return;
-    const items = getList(key);
+    const items = await getListAPI(key);
     if (items.includes(val)) return showAlert('Item already exists.');
     items.push(val);
-    saveList(key, items);
+    await saveListAPI(key, items);
     input.value = '';
     renderManageList(key, listId);
 }
 
-function removeItem(key, idx, listId) {
-    const items = getList(key);
+async function removeItem(key, idx, listId) {
+    const items = await getListAPI(key);
     items.splice(idx, 1);
-    saveList(key, items);
+    await saveListAPI(key, items);
     renderManageList(key, listId);
 }
 
 async function editItem(key, idx, listId) {
-    const items = getList(key);
+    const items = await getListAPI(key);
     const newVal = await showPrompt('Enter updated value:', items[idx]);
     if (newVal !== null && newVal.trim() !== '' && newVal !== items[idx]) {
         items[idx] = newVal.trim();
-        saveList(key, items);
+        await saveListAPI(key, items);
         renderManageList(key, listId);
         showAlert('Updated successfully.');
     }
 }
 
-function loadManageLists() {
-    // Seed defaults if empty
-    if (getList('sites').length === 0) saveList('sites', ['Grava', 'Apas', 'Vipina']);
-    if (getList('contractors').length === 0) saveList('contractors', ['KLC PVT LTD', 'Sri Infra Works', 'Reddy Constructions']);
-    if (getList('roles').length === 0) saveList('roles', ['Worker', 'IT Engineer', 'MEP', 'Safety', 'Quality', 'Others']);
-
-    renderManageList('sites', 'siteList');
-    renderManageList('contractors', 'contractorList');
-    renderManageList('roles', 'roleList');
+async function loadManageLists() {
+    await renderManageList('sites', 'siteList');
+    await renderManageList('contractors', 'contractorList');
+    await renderManageList('roles', 'roleList');
 }
 
 // Wire CRUD buttons

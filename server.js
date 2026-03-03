@@ -214,5 +214,40 @@ app.get('/api/config', (req, res) => {
     });
 });
 
+// Master Data Management schemas & endpoints
+const MasterDataSchema = new mongoose.Schema({
+    type: { type: String, unique: true },
+    data: [String]
+});
+const MasterData = mongoose.model('MasterData', MasterDataSchema);
+
+const setupMasterDataRoute = (type, defaultData) => {
+    app.get(`/api/${type}`, async (req, res) => {
+        try {
+            const doc = await MasterData.findOne({ type });
+            res.json(doc ? doc.data : defaultData);
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    app.post(`/api/${type}`, async (req, res) => {
+        try {
+            await MasterData.findOneAndUpdate(
+                { type },
+                { data: req.body.data },
+                { upsert: true, new: true }
+            );
+            res.json({ message: 'Saved successfully' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+};
+
+setupMasterDataRoute('sites', ['Grava', 'Apas', 'Vipina']);
+setupMasterDataRoute('contractors', ['KLC PVT LTD', 'Sri Infra Works', 'Reddy Constructions']);
+setupMasterDataRoute('roles', ['Worker', 'IT Engineer', 'MEP', 'Safety', 'Quality', 'Others']);
+
 // app.listen is now inside the mongoose connection block above
 
