@@ -84,15 +84,33 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 // ------ DASHBOARD ------
+
+// Animated counter: counts up from 0 to target
+function animateCounter(el, target) {
+    const duration = 1200;
+    const start = performance.now();
+    const from = parseInt(el.textContent) || 0;
+
+    function tick(now) {
+        const elapsed = now - start;
+        const progress = Math.min(elapsed / duration, 1);
+        // Ease out cubic
+        const eased = 1 - Math.pow(1 - progress, 3);
+        el.textContent = Math.round(from + (target - from) * eased);
+        if (progress < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+}
+
 async function loadDashboard() {
     try {
         const resp = await fetch(`${API}/api/stats`);
         const data = await resp.json();
 
-        document.getElementById('statTotal').textContent = data.total || 0;
-        document.getElementById('statToday').textContent = data.today || 0;
-        document.getElementById('statWeek').textContent = data.week || 0;
-        document.getElementById('statMonth').textContent = data.month || 0;
+        animateCounter(document.getElementById('statTotal'), data.total || 0);
+        animateCounter(document.getElementById('statToday'), data.today || 0);
+        animateCounter(document.getElementById('statWeek'), data.week || 0);
+        animateCounter(document.getElementById('statMonth'), data.month || 0);
 
         renderBarChart('siteChartArea', data.bySite || {});
         renderBarChart('contractorChartArea', data.byContractor || {});
@@ -100,6 +118,18 @@ async function loadDashboard() {
         console.error('Dashboard load failed:', err);
     }
 }
+
+// Gradient color pairs for chart bars
+const BAR_GRADIENTS = [
+    ['#1a3c6e', '#2d5aa0'],
+    ['#c8a45a', '#dab96e'],
+    ['#10b981', '#34d399'],
+    ['#6366f1', '#818cf8'],
+    ['#f59e0b', '#fbbf24'],
+    ['#ef4444', '#f87171'],
+    ['#8b5cf6', '#a78bfa'],
+    ['#ec4899', '#f472b6']
+];
 
 function renderBarChart(containerId, dataObj) {
     const container = document.getElementById(containerId);
@@ -110,12 +140,20 @@ function renderBarChart(containerId, dataObj) {
     }
 
     const maxVal = Math.max(...entries.map(e => e[1]), 1);
-    const chartHtml = `<div class="bar-chart">${entries.map(([label, value], i) => `
+    const total = entries.reduce((s, e) => s + e[1], 0);
+
+    const chartHtml = `<div class="bar-chart">${entries.map(([label, value], i) => {
+        const [c1, c2] = BAR_GRADIENTS[i % BAR_GRADIENTS.length];
+        const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+        return `
         <div class="bar-group">
             <span class="bar-value">${value}</span>
-            <div class="bar" style="height: ${(value / maxVal) * 180}px; background: ${BAR_COLORS[i % BAR_COLORS.length]};"></div>
+            <div class="bar" style="height: ${(value / maxVal) * 140}px; background: linear-gradient(180deg, ${c2}, ${c1});">
+                <div class="bar-tooltip">${label}: ${value} (${pct}%)</div>
+            </div>
             <span class="bar-label">${label}</span>
-        </div>`).join('')}
+        </div>`;
+    }).join('')}
     </div>`;
     container.innerHTML = chartHtml;
 }
