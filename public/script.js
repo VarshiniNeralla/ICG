@@ -2,6 +2,7 @@
 
 const CR80_W = 1100;
 const CR80_H = 1500;
+const PRINT_SCALE = 2; // Internal resolution multiplier for print quality (2x = ~430 DPI)
 const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? 'http://localhost:5000'
     : window.location.origin;
@@ -75,11 +76,13 @@ document.addEventListener('visibilitychange', () => {
 let operator = { name: '', site: '' };
 let capturedPhotoDataURL = null;
 let currentStep = 1;
-let batchQueue = [];
+let batchQueue = []; // Tiny proxies for preview + localStorage
+let batchPrintQueue = []; // Full-resolution images for actual printing (in-memory only)
 let stream = null;
 let isSaved = false;
 let isInBatch = false;
 let isSaving = false; // Submission lock to prevent duplicates
+let capturedCloudDataURL = null; // Compressed version for cloud upload
 
 const loginScreen = document.getElementById('loginScreen');
 const mainApp = document.getElementById('mainApp');
@@ -206,14 +209,18 @@ function validateStep(step) {
     const data = getFormData();
     if (step === 1) {
         if (!data.fullName || data.fullName.length < 3) return "Valid full name required.";
+        if (!/^[A-Za-z.\s]+$/.test(data.fullName)) return "Name must contain only letters, spaces, and dots.";
         if (data.aadhar.length !== 12 || isNaN(data.aadhar)) return "Aadhar must be 12 numeric digits.";
         if (!data.dob) return "Date of Birth required.";
-        if (parseInt(data.age) < 18) return "Age must be >= 18.";
+        const age = parseInt(data.age);
+        if (age < 18) return "Age must be at least 18 years.";
+        if (age > 100) return "Age cannot exceed 100 years.";
         if (!data.gender || !data.bloodGroup) return "Select gender and blood group.";
     }
     if (step === 2) {
         if (!data.contractor || !data.laborCamp || !data.designation) return "Select all employer fields.";
         if (data.contact.length !== 10 || isNaN(data.contact)) return "Contact must be 10 numeric digits.";
+        if (!/^[6-9]/.test(data.contact)) return "Phone number must start with 6, 7, 8, or 9.";
         if (!data.doi || !data.validity) return "DOI and Validity required.";
         if (new Date(data.validity) <= new Date(data.issueDate)) return "Validity must be in future.";
     }
@@ -250,8 +257,12 @@ function capturePhoto() {
     croppedPhoto.width = vw;
     croppedPhoto.height = vh;
     croppedPhoto.getContext('2d').drawImage(video, 0, 0, vw, vh);
-    // Compress to JPEG (0.7 quality) to save significant KB
-    capturedPhotoDataURL = croppedPhoto.toDataURL('image/jpeg', 0.7);
+    // Keep FULL quality for canvas rendering (print clarity)
+    const fullQualityDataURL = croppedPhoto.toDataURL('image/jpeg', 0.95);
+    // Compressed version for cloud upload (saves bandwidth/storage)
+    const cloudDataURL = croppedPhoto.toDataURL('image/jpeg', 0.5);
+    capturedPhotoDataURL = fullQualityDataURL;
+    capturedCloudDataURL = cloudDataURL;
 
     video.style.display = 'none';
     croppedPhoto.style.display = 'block';
@@ -298,7 +309,12 @@ function drawWatermark(ctx) {
 async function renderCard() {
     const data = getFormData();
     const ctx = idCard.getContext('2d');
-    idCard.width = CR80_W; idCard.height = CR80_H;
+
+    // Set canvas to 2x pixel resolution for high-DPI print quality
+    idCard.width = CR80_W * PRINT_SCALE;
+    idCard.height = CR80_H * PRINT_SCALE;
+    ctx.scale(PRINT_SCALE, PRINT_SCALE); // All coordinates stay the same, just rendered at 2x pixels
+
     ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, CR80_W, CR80_H);
     drawWatermark(ctx);
 
@@ -401,7 +417,7 @@ async function saveToBackend() {
     isSaving = true;
 
     const data = getFormData();
-    data.photoPath = capturedPhotoDataURL;
+    data.photoPath = capturedCloudDataURL || capturedPhotoDataURL; // Use compressed version for cloud
     data.site = operator.site || '';
     data.operator = operator.name || '';
 
@@ -442,7 +458,7 @@ function updateBatchUI() {
         const img = new Image(); img.src = item.snap; img.className = 'batch-item';
         batchList.appendChild(img);
     });
-    // Persist batch to localStorage if possible (may fail silently if quota exceeded)
+    // Persist ONLY the tiny proxy snapshots to localStorage (never the full-res print data)
     try {
         localStorage.setItem('ep_batch', JSON.stringify(batchQueue));
     } catch (e) {
@@ -466,13 +482,16 @@ function nextEntry() {
     document.getElementById('issueDate').value = '';
 
     capturedPhotoDataURL = null;
+    capturedCloudDataURL = null;
     video.style.display = 'none';
     croppedPhoto.style.display = 'none';
     photoPlaceholder.style.display = 'flex';
     if (canvasEmpty) canvasEmpty.style.display = 'flex';
     idCard.style.display = 'none';
     previewActions.style.display = 'none';
-    btnNextEntry.style.display = 'none';
+    const bottomActions = document.getElementById('bottomActions');
+    if (bottomActions) bottomActions.style.display = 'none';
+    btnNextEntry.style.display = 'inline-flex';
     btnAddToBatch.style.display = 'inline-flex';
 
     setDefaultDates();
@@ -525,6 +544,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (canvasEmpty) canvasEmpty.style.display = 'none';
         idCard.style.display = 'block';
         previewActions.style.display = 'flex';
+        const bottomActions = document.getElementById('bottomActions');
+        if (bottomActions) bottomActions.style.display = 'flex';
 
         btnGenerate.disabled = false;
         btnGenerate.textContent = 'Generate Pass';
@@ -537,14 +558,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const siteCode = (SITE_CONFIG[operator.site]?.code || operator.site.toUpperCase()).substring(0, 5);
         const d = getFormData();
         const link = document.createElement('a');
-        link.download = `ENTRY_PASS_${siteCode}_${d.fullName.replace(/\s+/g, '_').toUpperCase()}.jpg`;
-        link.href = idCard.toDataURL('image/jpeg', 0.95); link.click();
+        link.download = `ENTRY_PASS_${siteCode}_${d.fullName.replace(/\s+/g, '_').toUpperCase()}.png`;
+        link.href = idCard.toDataURL('image/png'); link.click();
         // Attempt save in background if not already done
         if (!isSaved) saveToBackend();
     };
 
     btnPrint.onclick = () => {
-        document.getElementById('printImg').src = idCard.toDataURL('image/jpeg', 0.95);
+        document.getElementById('printImg').src = idCard.toDataURL('image/png');
         window.print();
         // Attempt save in background if not already done
         if (!isSaved) saveToBackend();
@@ -556,28 +577,37 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (batchQueue.length >= 9) return showAlert('Batch full.');
 
-        // CRITICAL: Generate proxy thumbnail for batch queue (scaled down to fit localStorage)
+        // Store TINY proxy for preview/localStorage
         const proxyCanvas = document.createElement('canvas');
         proxyCanvas.width = CR80_W / 4.5;
         proxyCanvas.height = CR80_H / 4.5;
         const pCtx = proxyCanvas.getContext('2d');
         pCtx.drawImage(idCard, 0, 0, proxyCanvas.width, proxyCanvas.height);
-
         batchQueue.push({ snap: proxyCanvas.toDataURL('image/jpeg', 0.4) });
+
+        // Store FULL RESOLUTION PNG for actual printing (in-memory only, never touches localStorage)
+        batchPrintQueue.push({ snap: idCard.toDataURL('image/png') });
+
         isInBatch = true;
         updateBatchUI();
         btnAddToBatch.style.display = 'none';
-        btnNextEntry.style.display = 'inline-flex';
 
         // Attempt save in background if not already done
         if (!isSaved) saveToBackend();
+
+        // Auto-prompt when batch is full (9 cards)
+        if (batchQueue.length >= 9) {
+            showBatchFullAlert();
+        }
     };
 
     btnNextEntry.onclick = nextEntry;
-    btnClearBatch.onclick = () => { batchQueue = []; updateBatchUI(); };
+    btnClearBatch.onclick = () => { batchQueue = []; batchPrintQueue = []; updateBatchUI(); };
     btnPrintBatch.onclick = () => {
         batchPrintArea.innerHTML = '';
-        const promises = batchQueue.map(item => {
+        // Use FULL RESOLUTION images for printing, not the tiny proxies
+        const printSource = batchPrintQueue.length > 0 ? batchPrintQueue : batchQueue;
+        const promises = printSource.map(item => {
             return new Promise((res) => {
                 const img = new Image();
                 img.onload = res;
@@ -593,9 +623,40 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('closeAlert').onclick = () => {
         document.getElementById('customAlert').style.display = 'none';
     };
+
+    // Print Batch button inside the batch-full alert modal
+    const alertPrintBtn = document.getElementById('alertPrintBatch');
+    if (alertPrintBtn) {
+        alertPrintBtn.onclick = () => {
+            document.getElementById('customAlert').style.display = 'none';
+            // Trigger batch print
+            btnPrintBatch.click();
+            // Clear batch after a short delay so the print dialog opens first
+            setTimeout(() => {
+                batchQueue = [];
+                batchPrintQueue = [];
+                updateBatchUI();
+
+                // Restore current card's buttons so it doesn't get lost
+                isInBatch = false;
+                btnAddToBatch.style.display = 'inline-flex';
+            }, 1000);
+        };
+    }
 });
 
 function showAlert(msg) {
     document.getElementById('alertMessage').textContent = msg;
+    // Hide print batch button in normal alerts
+    const printBtn = document.getElementById('alertPrintBatch');
+    if (printBtn) printBtn.style.display = 'none';
+    document.getElementById('customAlert').style.display = 'flex';
+}
+
+function showBatchFullAlert() {
+    document.getElementById('alertMessage').textContent = 'Batch is full (9/9)! Print the batch and clear it before adding more cards.';
+    // Show print batch button in batch-full alert
+    const printBtn = document.getElementById('alertPrintBatch');
+    if (printBtn) printBtn.style.display = 'inline-flex';
     document.getElementById('customAlert').style.display = 'flex';
 }

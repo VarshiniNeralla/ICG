@@ -120,7 +120,7 @@
                                 </form>
                                 <div class="step-actions">
                                     <button type="button" id="btnToStep2" class="btn btn-primary btn-block">Next:
-                                        Employment &rarr;</button>
+                                        Employee Details &rarr;</button>
                                 </div>
                             </div>
                         </div>
@@ -215,18 +215,20 @@
                 <div class="preview-card">
                     <div class="preview-header">
                         <h2 class="section-title">Pass Preview</h2>
-                        <div class="action-stack" id="previewActions" style="display:none;">
+                        <div class="action-stack-top" id="previewActions" style="display:none;">
                             <button type="button" id="btnDownload" class="btn btn-secondary btn-sm">Download</button>
                             <button type="button" id="btnPrint" class="btn btn-secondary btn-sm">Print</button>
-                            <button type="button" id="btnAddToBatch" class="btn btn-success btn-sm">Save & Add to
-                                Batch</button>
-                            <button type="button" id="btnNextEntry" class="btn btn-primary btn-sm"
-                                style="display:none;">Next Entry</button>
                         </div>
                     </div>
                     <div class="canvas-stage">
                         <!-- <div class="stage-placeholder" id="canvasEmpty">Preview will appear here</div> -->
                         <canvas id="idCard" width="638" height="1011"></canvas>
+                    </div>
+                    <div class="action-bar-bottom" id="bottomActions" style="display:none;">
+                        <button type="button" id="btnAddToBatch" class="btn btn-success">Save &amp; Add to
+                            Batch</button>
+                        <button type="button" id="btnNextEntry" class="btn btn-primary">Next
+                            Entry</button>
                     </div>
                 </div>
 
@@ -256,6 +258,8 @@
                 <p id="alertMessage"></p>
             </div>
             <div class="modal-footer">
+                <button type="button" id="alertPrintBatch" class="btn btn-success btn-sm" style="display:none;">Print
+                    Batch &amp; Clear</button>
                 <button type="button" id="closeAlert" class="btn btn-primary btn-sm">OK</button>
             </div>
         </div>
