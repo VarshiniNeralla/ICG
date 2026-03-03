@@ -94,6 +94,52 @@ const EmployeeSchema = new mongoose.Schema({
 
 const Employee = mongoose.model('Employee', EmployeeSchema);
 
+// Indexes for fast duplicate lookups
+EmployeeSchema.index({ aadhar: 1 });
+EmployeeSchema.index({ contact: 1 });
+
+// ── Duplicate Check Endpoint ─────────────────────────────────────────────────
+app.post('/api/check-duplicate', async (req, res) => {
+    try {
+        const { aadhar, contact } = req.body;
+        if (!aadhar && !contact) return res.json({ duplicate: false });
+
+        // Build $or query for whichever fields are provided
+        const conditions = [];
+        if (aadhar) conditions.push({ aadhar });
+        if (contact) conditions.push({ contact });
+
+        const existing = await Employee.findOne({ $or: conditions }).sort({ createdAt: -1 });
+
+        if (!existing) return res.json({ duplicate: false });
+
+        // Determine which field(s) matched
+        const aadharMatch = aadhar && existing.aadhar === aadhar;
+        const contactMatch = contact && existing.contact === contact;
+        let matchedOn = 'unknown';
+        if (aadharMatch && contactMatch) matchedOn = 'both';
+        else if (aadharMatch) matchedOn = 'aadhar';
+        else if (contactMatch) matchedOn = 'contact';
+
+        res.json({
+            duplicate: true,
+            matchedOn,
+            existing: {
+                fullName: existing.fullName,
+                site: existing.site || 'N/A',
+                operator: existing.operator || 'N/A',
+                createdAt: existing.createdAt,
+                aadhar: existing.aadhar,
+                contact: existing.contact
+            }
+        });
+    } catch (err) {
+        // If check fails, let the operator proceed — never block
+        console.error('Duplicate check failed:', err.message);
+        res.json({ duplicate: false });
+    }
+});
+
 app.post('/api/save-employee', async (req, res) => {
     const reqID = Date.now();
     let cloudinarySuccess = true;

@@ -73,6 +73,14 @@ document.addEventListener('visibilitychange', () => {
     }
 });
 
+// ── Tab Closure Safeguard ────────────────────────────────────────────────────
+window.addEventListener('beforeunload', (e) => {
+    if (batchQueue && batchQueue.length > 0) {
+        e.preventDefault();
+        e.returnValue = ''; // Triggers standard browser "Leave site?" dialog
+    }
+});
+
 let operator = { name: '', site: '' };
 let capturedPhotoDataURL = null;
 let currentStep = 1;
@@ -536,8 +544,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!capturedPhotoDataURL) return showAlert("Photo required.");
 
         btnGenerate.disabled = true;
-        btnGenerate.textContent = 'Rendering...';
+        btnGenerate.textContent = 'Checking...';
 
+        // ── Duplicate Check ──────────────────────────────────────────────────
+        const data = getFormData();
+        const dup = await checkDuplicate(data.aadhar, data.contact);
+        if (dup) {
+            const proceed = await showDuplicateConfirm(dup);
+            if (!proceed) {
+                btnGenerate.disabled = false;
+                btnGenerate.textContent = 'Generate Pass';
+                return;
+            }
+        }
+
+        btnGenerate.textContent = 'Rendering...';
         await renderCard();
 
         // Show card and ALL buttons immediately — never wait for backend
@@ -659,4 +680,52 @@ function showBatchFullAlert() {
     const printBtn = document.getElementById('alertPrintBatch');
     if (printBtn) printBtn.style.display = 'inline-flex';
     document.getElementById('customAlert').style.display = 'flex';
+}
+
+// ── Duplicate Detection Logic ────────────────────────────────────────────────
+async function checkDuplicate(aadhar, contact) {
+    try {
+        const resp = await fetch(`${API_BASE}/api/check-duplicate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ aadhar, contact })
+        });
+        const result = await resp.json();
+        return result.duplicate ? result : null;
+    } catch (e) {
+        console.error('Duplicate check error:', e);
+        return null; // Fail safe
+    }
+}
+
+function showDuplicateConfirm(dupData) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('duplicateModal');
+        const msg = document.getElementById('duplicateMessage');
+        const details = document.getElementById('existingRecordDetails');
+        const btnCont = document.getElementById('btnContinueDuplicate');
+        const btnCancel = document.getElementById('btnCancelDuplicate');
+
+        const field = dupData.matchedOn === 'both' ? 'Aadhar & Phone Number' : (dupData.matchedOn === 'aadhar' ? 'Aadhar Number' : 'Phone Number');
+
+        msg.innerHTML = `This <strong>${field}</strong> already exists in the system for another employee.`;
+
+        details.innerHTML = `
+            <div style="margin-bottom: 0.5rem;"><strong>Name:</strong> ${dupData.existing.fullName}</div>
+            <div style="margin-bottom: 0.5rem;"><strong>Site:</strong> ${dupData.existing.site}</div>
+            <div style="margin-bottom: 0.5rem;"><strong>Operator:</strong> ${dupData.existing.operator}</div>
+            <div><strong>Date:</strong> ${formatDate(dupData.existing.createdAt)}</div>
+        `;
+
+        modal.style.display = 'flex';
+
+        btnCont.onclick = () => {
+            modal.style.display = 'none';
+            resolve(true);
+        };
+        btnCancel.onclick = () => {
+            modal.style.display = 'none';
+            resolve(false);
+        };
+    });
 }

@@ -10,8 +10,8 @@ const API = (window.location.hostname === 'localhost' || window.location.hostnam
     : window.location.origin;
 const ADMIN_CREDS = { user: 'admin', pass: 'admin@123' };
 
-// Color palette for chart bars
-const BAR_COLORS = ['#1a3c6e', '#c8a45a', '#10b981', '#6366f1', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+
+
 
 const formatDate = (d) => {
     if (!d) return '---';

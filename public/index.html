@@ -265,6 +265,26 @@
         </div>
     </div>
 
+    <!-- DUPLICATE CONFIRMATION MODAL -->
+    <div id="duplicateModal" class="modal-overlay" style="display:none;">
+        <div class="modal-content" style="width: 420px;">
+            <div class="modal-header">
+                <h3 style="color: #92400e;">⚠️ Duplicate Found!</h3>
+            </div>
+            <div class="modal-body">
+                <p id="duplicateMessage" style="margin-bottom: 1rem;"></p>
+                <div id="existingRecordDetails"
+                    style="background: #fffbeb; border: 1px solid #fef3c7; padding: 1rem; border-radius: 12px; font-size: 0.85rem; text-align: left; margin-bottom: 1.5rem;">
+                </div>
+                <p style="font-weight: 600; color: var(--text);">Generate this new pass anyway?</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="btnCancelDuplicate" class="btn btn-secondary btn-sm">Cancel</button>
+                <button type="button" id="btnContinueDuplicate" class="btn btn-primary btn-sm">Continue anyway</button>
+            </div>
+        </div>
+    </div>
+
     <!-- NON-BLOCKING TOAST NOTIFICATIONS -->
     <div id="toastContainer"></div>
 
