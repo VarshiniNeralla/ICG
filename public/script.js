@@ -1,7 +1,7 @@
 'use strict';
 
-const CR80_W = 638;
-const CR80_H = 1011;
+const CR80_W = 1100;
+const CR80_H = 1500;
 const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? 'http://localhost:5000'
     : window.location.origin;
@@ -263,26 +263,26 @@ function capturePhoto() {
 
 function drawWatermark(ctx) {
     const siteName = operator.site || "UNKNOWN";
-    const code = getSiteCode(siteName);
-    const [seg1, seg2] = getSiteSegments(code);
-    const watermarkText = `⟁ ${seg1} ⟡ ${seg2} ⟁`;
+    const firstLetter = siteName.charAt(0).toUpperCase();
+    const lastLetter = siteName.charAt(siteName.length - 1).toUpperCase();
+    const watermarkText = `⟁ ${firstLetter} ✦ ${lastLetter} ⟁`;
 
-    // Increased visibility to 12% (0.12) as requested
-    const baseColor = SITE_CONFIG[siteName]?.tint || 'rgba(0,0,0,0.12)';
-    const tint = baseColor.replace(/[\d.]+\)$/g, '0.12)');
+    // Dark navy blue watermark (e.g. #0d2240 with low opacity)
+    const tint = 'rgba(13, 34, 64, 0.30)';
 
     ctx.save();
 
     // Unique dynamic rotation based on site code length for a "Site-Specific" tilt
+    const code = getSiteCode(siteName);
     const dynamicRotation = -25 - (code.length % 10); // Subtle variation between 25-35 degrees
     ctx.rotate(dynamicRotation * Math.PI / 180);
 
-    ctx.font = 'bold 22px Inter';
+    ctx.font = 'bold 36px Inter';
     ctx.fillStyle = tint;
 
     // STAGGERED DIAMOND GRID: More unique and secure 
-    const stepX = 420;
-    const stepY = 120;
+    const stepX = 360;
+    const stepY = 160;
 
     for (let y = -CR80_H * 2; y < CR80_H * 3; y += stepY) {
         // Offset every second row for a diamond-flow pattern
@@ -302,16 +302,18 @@ async function renderCard() {
     ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, CR80_W, CR80_H);
     drawWatermark(ctx);
 
-    ctx.strokeStyle = '#0d2240'; ctx.lineWidth = 4;
-    ctx.strokeRect(2, 2, CR80_W - 4, CR80_H - 4);
+    ctx.strokeStyle = '#000000'; ctx.lineWidth = 14;
+    // Draw the border inset by 15px on all sides to prevent edge clipping during print
+    ctx.strokeRect(15, 15, CR80_W - 30, CR80_H - 30);
 
-    ctx.textAlign = 'center'; ctx.font = 'bold 36px Inter'; ctx.fillStyle = '#1a3c6e';
-    ctx.fillText(data.contractor.toUpperCase(), CR80_W / 2, 60);
+    ctx.textAlign = 'center'; ctx.font = '800 66px Inter'; ctx.fillStyle = '#1a3c6e';
+    ctx.fillText(data.contractor.toUpperCase(), CR80_W / 2, 90);
 
-    ctx.textAlign = 'right'; ctx.font = 'bold 22px Inter';
-    if (data.laborCamp === 'LC') ctx.fillText('LC', CR80_W - 40, 50);
+    ctx.textAlign = 'right'; ctx.font = 'bold 46px Inter'; ctx.fillStyle = '#000000';
+    // Shift LC farther left by 30px so it perfectly clears the 15px border inset and fits cleanly
+    if (data.laborCamp === 'LC') ctx.fillText('LC', CR80_W - 85, 90);
 
-    const phY = 100, phW = 320, phH = 427, phX = (CR80_W - phW) / 2;
+    const phY = 130, phW = 435, phH = 575, phX = (CR80_W - phW) / 2;
     if (capturedPhotoDataURL) {
         const ph = await loadImage(capturedPhotoDataURL);
         ctx.save();
@@ -321,24 +323,24 @@ async function renderCard() {
     }
 
     ctx.textAlign = 'center'; ctx.fillStyle = '#0d2240';
-    ctx.font = 'bold 38px Inter'; ctx.fillText(data.fullName.toUpperCase(), CR80_W / 2, phY + phH + 75);
-    ctx.font = 'bold 24px Inter'; ctx.fillStyle = '#c8a45a';
-    ctx.fillText(data.designation.toUpperCase(), CR80_W / 2, phY + phH + 115);
+    ctx.font = 'bold 58px Inter'; ctx.fillText(data.fullName.toUpperCase(), CR80_W / 2, phY + phH + 95);
+    ctx.font = 'bold 44px Inter'; ctx.fillStyle = '#000000';
+    ctx.fillText(data.designation.toUpperCase(), CR80_W / 2, phY + phH + 160);
 
-    const ty = phY + phH + 200;
+    const ty = phY + phH + 250;
     const items = [
-        { l: 'AADHAR', v: data.aadhar, x: 50 }, { l: 'GENDER', v: data.gender, x: 350 },
-        { l: 'DOB/AGE', v: `${formatDate(data.dob)} / ${data.age}`, x: 50 }, { l: 'BLOOD GRP', v: data.bloodGroup, x: 350 },
-        { l: 'IND. DATE', v: formatDate(data.doi), x: 50 }, { l: 'VALIDITY', v: formatDate(data.validity), x: 350 },
-        { l: 'ISSUE DATE', v: formatDate(data.issueDate), x: 50 }, { l: 'CONTACT', v: data.contact, x: 350 }
+        { l: 'AADHAR', v: data.aadhar, x: 65 }, { l: 'GENDER', v: data.gender, x: 615 },
+        { l: 'DOB/AGE', v: `${formatDate(data.dob)} / ${data.age}`, x: 65 }, { l: 'BLOOD GRP', v: data.bloodGroup, x: 615 },
+        { l: 'IND. DATE', v: formatDate(data.doi), x: 65 }, { l: 'VALIDITY', v: formatDate(data.validity), x: 615 },
+        { l: 'ISSUE DATE', v: formatDate(data.issueDate), x: 65 }, { l: 'CONTACT', v: data.contact, x: 615 }
     ];
 
     ctx.textAlign = 'left';
     items.forEach((item, i) => {
         const row = Math.floor(i / 2);
-        const yCoord = ty + (row * 68);
-        ctx.font = '700 16px Inter'; ctx.fillStyle = '#64748b'; ctx.fillText(item.l, item.x, yCoord);
-        ctx.font = '800 20px Inter'; ctx.fillStyle = '#111827'; ctx.fillText(item.v, item.x, yCoord + 28);
+        const yCoord = ty + (row * 135);
+        ctx.font = 'bold 46px Inter'; ctx.fillStyle = '#000000'; ctx.fillText(item.l, item.x, yCoord);
+        ctx.font = '800 66px Inter'; ctx.fillStyle = '#000000'; ctx.fillText(item.v, item.x, yCoord + 65);
     });
 }
 

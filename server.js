@@ -249,5 +249,4 @@ setupMasterDataRoute('sites', ['Grava', 'Apas', 'Vipina']);
 setupMasterDataRoute('contractors', ['KLC PVT LTD', 'Sri Infra Works', 'Reddy Constructions']);
 setupMasterDataRoute('roles', ['Worker', 'IT Engineer', 'MEP', 'Safety', 'Quality', 'Others']);
 
-// app.listen is now inside the mongoose connection block above
 

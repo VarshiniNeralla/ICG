@@ -521,14 +521,15 @@ input[readonly] {
         z-index: 99999;
         align-items: flex-start;
         justify-content: flex-start;
-        padding: 10mm;
+        padding: 15px;
+        /* Added 15px padding minimum */
     }
 
     #printArea img {
         display: block !important;
         visibility: visible !important;
-        width: 54mm;
-        height: 85.6mm;
+        width: 130mm;
+        height: 170mm;
         object-fit: contain;
     }
 
@@ -543,20 +544,21 @@ input[readonly] {
         min-height: 297mm;
         z-index: 100000;
         background: white;
-        grid-template-columns: repeat(3, 54mm);
-        grid-auto-rows: 85.6mm;
-        gap: 5mm;
-        padding: 10mm;
+        grid-template-columns: repeat(3, 62mm);
+        grid-auto-rows: 93.5mm;
+        gap: 3mm;
+        padding: 5mm;
         align-items: start;
-        justify-items: start;
+        justify-items: center;
     }
 
     #batchPrintArea img {
         display: block !important;
         visibility: visible !important;
-        width: 54mm;
-        height: 85.6mm;
+        width: 62mm;
+        height: 93.5mm;
         object-fit: contain;
+        /* maintains inner scale aspect ratio */
     }
 
     @page {
