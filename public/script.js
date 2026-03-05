@@ -205,12 +205,15 @@ const getFormData = () => ({
 const loadImage = (src) => new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = src; });
 const formatDate = (d) => {
     if (!d) return '---';
+    // If already in dd-mm-yyyy format, return as is to prevent double-formatting/inversion
+    if (typeof d === 'string' && /^\d{2}-\d{2}-\d{4}$/.test(d)) return d;
+
     const date = new Date(d);
-    if (isNaN(date.getTime())) return d; // Return raw if invalid
+    if (isNaN(date.getTime())) return d; // Return raw (like already formatted)
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = date.getFullYear();
-    return `${day}/${month}/${year}`;
+    return `${day}-${month}-${year}`;
 };
 
 function validateStep(step) {
@@ -510,8 +513,87 @@ function nextEntry() {
     goToStep(1);
 }
 
+// ------ SITE RECORDS FOR OPERATORS ------
+async function loadSiteRecords() {
+    const site = operator.site;
+    if (!site) return;
+
+    document.getElementById('siteRecordsTitle').textContent = site;
+    document.getElementById('recordsModal').style.display = 'flex';
+    const tbody = document.getElementById('siteRecordsBody');
+    tbody.innerHTML = '<tr><td colspan="15" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/employees?site=${encodeURIComponent(site)}`);
+        const records = await resp.json();
+        tbody.innerHTML = '';
+
+        if (records.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="15" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
+            return;
+        }
+
+        records.forEach(r => {
+            const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API_BASE}/${r.photoPath.replace(/\\/g, '/')}`) : '';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${photoSrc ? `<img src="${photoSrc}" style="width:40px; height:50px; border-radius:4px; object-fit:cover;" />` : 'N/A'}</td>
+                <td>${r.fullName || '---'}</td>
+                <td>${r.aadhar || '---'}</td>
+                <td>${r.age || '---'}</td>
+                <td>${r.gender || '---'}</td>
+                <td>${formatDate(r.dob)}</td>
+                <td>${r.bloodGroup || '---'}</td>
+                <td>${r.contractor || '---'}</td>
+                <td>${r.laborCamp || '---'}</td>
+                <td>${r.designation || '---'}</td>
+                <td>${r.contact || '---'}</td>
+                <td>${r.operator || '---'}</td>
+                <td>${formatDate(r.doi)}</td>
+                <td>${formatDate(r.validity)}</td>
+                <td>${formatDate(r.issueDate)}</td>`;
+            tbody.appendChild(tr);
+        });
+    } catch (err) {
+        console.error('Failed to load site records:', err);
+        tbody.innerHTML = '<tr><td colspan="15" style="text-align:center; padding:2rem; color:red;">Error loading records.</td></tr>';
+    }
+}
+
+function exportSiteToExcel() {
+    const table = document.getElementById('siteRecordsTable');
+    const rows = table.querySelectorAll('tr');
+    const SKIP_COLS = new Set([0]); // Skip Photo column
+    let csv = '';
+
+    rows.forEach(row => {
+        const cells = row.querySelectorAll('th, td');
+        const rowData = [];
+        cells.forEach((cell, idx) => {
+            if (SKIP_COLS.has(idx)) return;
+            rowData.push('"' + cell.textContent.replace(/"/g, '""').trim() + '"');
+        });
+        csv += rowData.join(',') + '\n';
+    });
+
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `SiteRecords_${operator.site.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     initSession();
+
+    // Event listeners for site records
+    const btnViewRecords = document.getElementById('btnViewRecords');
+    const btnExportSiteExcel = document.getElementById('btnExportSiteExcel');
+    const closeRecords = document.getElementById('closeRecords');
+
+    if (btnViewRecords) btnViewRecords.onclick = loadSiteRecords;
+    if (btnExportSiteExcel) btnExportSiteExcel.onclick = exportSiteToExcel;
+    if (closeRecords) closeRecords.onclick = () => document.getElementById('recordsModal').style.display = 'none';
 
     dobInput.onchange = () => {
         const b = new Date(dobInput.value), t = new Date();

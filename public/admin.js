@@ -15,12 +15,15 @@ const ADMIN_CREDS = { user: 'admin', pass: 'admin@123' };
 
 const formatDate = (d) => {
     if (!d) return '---';
+    // If already in dd-mm-yyyy format, return as is to prevent double-formatting/inversion
+    if (typeof d === 'string' && /^\d{2}-\d{2}-\d{4}$/.test(d)) return d;
+
     const date = new Date(d);
     if (isNaN(date.getTime())) return d; // Return raw (like already formatted)
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = date.getFullYear();
-    return `${day}/${month}/${year}`;
+    return `${day}-${month}-${year}`;
 };
 
 // DOM

@@ -224,13 +224,19 @@ app.post('/api/save-employee', async (req, res) => {
 
 app.get('/api/employees', async (req, res) => {
     try {
-        const { from, to } = req.query;
+        const { from, to, site } = req.query;
         const filter = {};
+
         if (from || to) {
             filter.createdAt = {};
             if (from) filter.createdAt.$gte = new Date(from);
             if (to) filter.createdAt.$lte = new Date(to + 'T23:59:59.999Z');
         }
+
+        if (site) {
+            filter.site = site;
+        }
+
         const employees = await Employee.find(filter).sort({ createdAt: -1 });
         res.json(employees);
     } catch (err) {

@@ -85,8 +85,15 @@ body {
     margin: 0 auto;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     gap: 2rem;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-left: auto;
 }
 
 .header-logo {
@@ -694,4 +701,90 @@ input[readonly] {
 .toast-error {
     background: #7f1d1d;
     border-left: 4px solid #ef4444;
+}
+
+/* ───── DATA TABLE (Sites view) ───── */
+.data-table {
+    width: 100%;
+    min-width: 1400px;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+    background: white;
+}
+
+.data-table thead {
+    background: #f8fafc;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.data-table th {
+    padding: 0.85rem 1rem;
+    text-align: left;
+    font-weight: 800;
+    color: var(--primary);
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    border-bottom: 2px solid var(--border);
+    white-space: nowrap;
+}
+
+.data-table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    color: var(--text);
+}
+
+.data-table tbody tr:hover {
+    background: #f8fafc;
+}
+
+/* Scrollbar for records wrap */
+.modal-body {
+    scrollbar-width: thin;
+    scrollbar-color: #94a3b8 #f1f5f9;
+}
+
+.modal-body::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.modal-body::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+
+.modal-body::-webkit-scrollbar-thumb {
+    background: #94a3b8;
+    border-radius: 10px;
+}
+
+/* Modal Close Button */
+.modal-close-btn {
+    position: absolute;
+    top: 1.25rem;
+    right: 1.25rem;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #fee2e2;
+    color: #ef4444;
+    border: none;
+    font-size: 1.5rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 10;
+}
+
+.modal-close-btn:hover {
+    background: #ef4444;
+    color: white;
+    transform: rotate(90deg);
 }
