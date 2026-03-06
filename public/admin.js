@@ -227,18 +227,18 @@ function renderRecordsTable(records) {
         const tr = document.createElement('tr');
         tr.innerHTML = `
                 <td>${photoSrc ? `<img src="${photoSrc}" class="record-photo" alt="Photo" />` : '<span style="color:var(--text-light)">N/A</span>'}</td>
+                <td>${r.operator || 'EMPTY'}</td>
+                <td>${r.site || 'EMPTY'}</td>
+                <td>${r.contractor || '---'}</td>
                 <td>${r.fullName || '---'}</td>
                 <td>${r.aadhar || '---'}</td>
                 <td>${r.age || '---'}</td>
                 <td>${r.gender || '---'}</td>
                 <td>${formatDate(r.dob)}</td>
                 <td>${r.bloodGroup || '---'}</td>
-                <td>${r.contractor || '---'}</td>
                 <td>${r.laborCamp || '---'}</td>
                 <td>${r.designation || '---'}</td>
                 <td>${r.contact || '---'}</td>
-                <td>${r.site || 'EMPTY'}</td>
-                <td>${r.operator || 'EMPTY'}</td>
                 <td>${formatDate(r.doi)}</td>
                 <td>${formatDate(r.validity)}</td>
                 <td>${formatDate(r.issueDate)}</td>

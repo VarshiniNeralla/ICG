@@ -120,14 +120,61 @@ body {
 }
 
 /* LAYOUT */
+/* LAYOUT STATES */
 .app-main {
+    width: 100%;
     max-width: 1440px;
     margin: 0 auto;
     padding: 2rem 3rem;
     display: grid;
-    grid-template-columns: 460px 1fr;
     gap: 3rem;
     align-items: start;
+    transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 1. Initial / Next Entry: Form narrow and centered */
+.app-main.layout-initial {
+    display: block;
+    max-width: 750px;
+}
+
+.app-main.layout-initial .panel-right {
+    display: none;
+}
+
+/* 2. Generating / Previewing: Form left, Preview center, Batch right */
+.app-main.layout-preview {
+    grid-template-columns: 460px 1fr;
+    max-width: 1440px;
+}
+
+.app-main.layout-preview .panel-right {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 1.5rem;
+}
+
+/* 3. Batch only: Form centered, Sidebar on the right */
+.app-main.layout-batch {
+    grid-template-columns: 340px 1fr 340px;
+    max-width: 100%;
+}
+
+.app-main.layout-batch .panel-left {
+    grid-column: 2;
+    max-width: 750px;
+    width: 100%;
+}
+
+.app-main.layout-batch .panel-right {
+    grid-column: 3;
+    width: 340px;
+    margin-top: 4.5rem;
+    /* Align with form card (below the stepper) */
+}
+
+.app-main.layout-batch .preview-card {
+    display: none;
 }
 
 @media (max-width: 1024px) {
@@ -154,15 +201,45 @@ body {
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
 }
 
+.step-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.75rem;
+}
+
+.btn-back {
+    background: #f1f5f9;
+    border: none;
+    color: var(--primary);
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-back:hover {
+    background: var(--primary);
+    color: white;
+    transform: translateX(-3px);
+}
+
 .section-title {
     font-size: 0.8rem;
     font-weight: 800;
     color: var(--primary);
     text-transform: uppercase;
-    margin-bottom: 1.25rem;
     letter-spacing: 0.1em;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.75rem;
+    flex: 1;
+    margin-bottom: 0 !important;
+    border-bottom: none !important;
+    padding-bottom: 0 !important;
 }
 
 /* CAROUSEL & STEPPER */
@@ -333,7 +410,6 @@ input[readonly] {
 /* PASS PREVIEW & BATCH – SIDE-BY-SIDE */
 .panel-right {
     display: grid;
-    grid-template-columns: 1fr 220px;
     gap: 1.5rem;
     align-items: start;
 }
@@ -413,28 +489,87 @@ input[readonly] {
 /* BATCH (right sidebar) */
 .batch-card {
     margin-top: 0;
+    min-width: 320px;
 }
 
 .batch-shelf {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-auto-rows: 1fr;
     gap: 0.5rem;
     min-height: 80px;
     padding: 0.75rem;
     background: #f8fafc;
     border-radius: 12px;
     border: 1px dashed var(--border);
-    overflow-y: auto;
-    max-height: 350px;
+}
+
+.batch-item-wrapper {
+    position: relative;
+    cursor: pointer;
+    transition: transform 0.2s;
+    aspect-ratio: 638/1011;
+}
+
+.batch-item-wrapper:hover {
+    transform: scale(1.05);
+    z-index: 2;
 }
 
 .batch-item {
     width: 100%;
-    height: auto;
+    height: 100%;
     background: white;
     border: 1px solid #ddd;
     border-radius: 6px;
     box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.08);
+    object-fit: contain;
+}
+
+.btn-remove-batch {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    width: 18px;
+    height: 18px;
+    background: #ef4444;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    z-index: 10;
+}
+
+.btn-remove-batch:hover {
+    background: #dc2626;
+    transform: scale(1.1);
+}
+
+/* Enlarged Preview Modal */
+.enlarged-preview-content {
+    background: transparent;
+    padding: 0;
+    box-shadow: none;
+    border: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+}
+
+.enlarged-img {
+    max-width: 90vw;
+    max-height: 80vh;
+    width: auto;
+    height: auto;
+    border-radius: 12px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    image-rendering: high-quality;
 }
 
 .batch-footer {

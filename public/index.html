@@ -59,12 +59,12 @@
             </div>
         </header>
 
-        <main class="app-main">
+        <main class="app-main layout-initial">
             <!-- Left: Form Carousel -->
             <section class="panel panel-left">
                 <div class="stepper">
                     <div class="step-item active" id="stepIndicator1">1 <span>Personal</span></div>
-                    <div class="step-item" id="stepIndicator2">2 <span>Employee</span></div>
+                    <div class="step-item" id="stepIndicator2">2 <span>Employment</span></div>
                     <div class="step-item" id="stepIndicator3">3 <span>Photo</span></div>
                 </div>
 
@@ -73,7 +73,9 @@
                         <!-- Step 1: Personal -->
                         <div class="carousel-step" id="step1">
                             <div class="card-section">
-                                <h2 class="section-title">Personal Details</h2>
+                                <div class="step-header">
+                                    <h2 class="section-title">Personal Details</h2>
+                                </div>
                                 <form id="passForm" autocomplete="off">
                                     <div class="field-group">
                                         <label>Full Name</label>
@@ -132,7 +134,18 @@
                         <!-- Step 2: Employment -->
                         <div class="carousel-step" id="step2">
                             <div class="card-section">
-                                <h2 class="section-title">Employment Details</h2>
+                                <div class="step-header">
+                                    <button type="button" id="btnBackTo1" class="btn-back"
+                                        title="Back to Personal Details">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                            stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                            stroke-linejoin="round">
+                                            <line x1="19" y1="12" x2="5" y2="12"></line>
+                                            <polyline points="12 19 5 12 12 5"></polyline>
+                                        </svg>
+                                    </button>
+                                    <h2 class="section-title">Employment Details</h2>
+                                </div>
                                 <div class="form-row two-col">
                                     <div class="field-group">
                                         <label>Contractor</label>
@@ -176,8 +189,7 @@
                                     <input type="text" id="issueDate" readonly />
                                 </div>
                                 <div class="step-actions">
-                                    <button type="button" id="btnBackTo1" class="btn btn-secondary">Back</button>
-                                    <button type="button" id="btnToStep3" class="btn btn-primary">Next: Photo
+                                    <button type="button" id="btnToStep3" class="btn btn-primary btn-block">Next: Photo
                                         &rarr;</button>
                                 </div>
                             </div>
@@ -186,27 +198,37 @@
                         <!-- Step 3: Photo -->
                         <div class="carousel-step" id="step3">
                             <div class="card-section">
-                                <h2 class="section-title">Photo Capture</h2>
+                                <div class="step-header">
+                                    <button type="button" id="btnBackTo2" class="btn-back"
+                                        title="Back to Employment Details">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                            stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                            stroke-linejoin="round">
+                                            <line x1="19" y1="12" x2="5" y2="12"></line>
+                                            <polyline points="12 19 5 12 12 5"></polyline>
+                                        </svg>
+                                    </button>
+                                    <h2 class="section-title">Photo Capture</h2>
+                                </div>
                                 <div class="webcam-module">
                                     <div class="webcam-canvas-area">
                                         <video id="videoFeed" autoplay muted playsinline></video>
-                                        <div class="photo-overlay" id="photoPlaceholder">Camera Inactive</div>
+                                        <div class="photo-overlay" id="photoPlaceholder">Camera is turned off!</div>
                                         <canvas id="croppedPhoto" style="display:none;"></canvas>
                                     </div>
                                     <div class="camera-error" id="cameraError"></div>
                                     <div class="camera-toolbar">
-                                        <button type="button" id="btnStartCamera"
-                                            class="btn btn-secondary btn-sm">Start</button>
+                                        <button type="button" id="btnStartCamera" class="btn btn-secondary btn-sm">Turn
+                                            On Camera</button>
                                         <button type="button" id="btnCapture" class="btn btn-primary btn-sm"
-                                            disabled>Capture</button>
+                                            style="display:none;">Capture</button>
                                         <button type="button" id="btnRetake" class="btn btn-secondary btn-sm"
                                             style="display:none;">Retake</button>
                                     </div>
                                 </div>
                                 <div class="step-actions">
-                                    <button type="button" id="btnBackTo2" class="btn btn-secondary">Back</button>
-                                    <button type="button" id="btnGenerate" class="btn btn-generate">Generate
-                                        Pass</button>
+                                    <button type="button" id="btnGenerate" class="btn btn-generate"
+                                        style="display:none;">Generate Pass</button>
                                 </div>
                             </div>
                         </div>
@@ -333,6 +355,16 @@
 
     <!-- NON-BLOCKING TOAST NOTIFICATIONS -->
     <div id="toastContainer"></div>
+
+    <!-- ENLARGED PREVIEW MODAL -->
+    <div id="previewModal" class="modal-overlay" style="display:none;">
+        <div class="modal-content enlarged-preview-content">
+            <button type="button" id="closePreview" class="modal-close-btn">&times;</button>
+            <img id="enlargedImg" class="enlarged-img" src="" alt="Enlarged Pass" />
+            <button type="button" id="btnDownloadEnlarged" class="btn btn-secondary" style="margin-top:1rem;">Download
+                Pass</button>
+        </div>
+    </div>
 
     <script src="script.js"></script>
 </body>

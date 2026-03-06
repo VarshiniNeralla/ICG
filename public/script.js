@@ -256,9 +256,10 @@ async function startCamera() {
         video.srcObject = stream;
         video.style.display = 'block';
         photoPlaceholder.style.display = 'none';
-        btnStart.disabled = true;
-        btnCapture.disabled = false;
+        btnStart.style.display = 'none';
+        btnCapture.style.display = 'inline-flex';
         btnRetake.style.display = 'none';
+        btnGenerate.style.display = 'none';
     } catch (err) { cameraError.textContent = 'Camera failed: ' + err.message; }
 }
 
@@ -277,10 +278,11 @@ function capturePhoto() {
 
     video.style.display = 'none';
     croppedPhoto.style.display = 'block';
-    btnCapture.disabled = true;
+    btnCapture.style.display = 'none';
     btnRetake.style.display = 'inline-flex';
+    btnGenerate.style.display = 'inline-flex';
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    btnStart.disabled = false;
+    btnStart.style.display = 'none'; // Hide Turn On Camera after capture
 }
 
 function drawWatermark(ctx) {
@@ -392,12 +394,10 @@ async function renderCard() {
         const row = Math.floor(i / 2);
         const yCoord = ty + (row * 130);
 
-        // Use a stark slate color for labels to declutter visual weight from the black max-bold values
-        ctx.font = 'bold 36px Inter'; ctx.fillStyle = '#334155'; // Darker gray for labels
+        ctx.font = 'bold 36px Inter'; ctx.fillStyle = '#334155';
         ctx.fillText(item.l, item.x, yCoord);
         ctx.font = '800 58px Inter'; ctx.fillStyle = '#000000'; ctx.fillText(item.v, item.x, yCoord + 55);
 
-        // Add subtle underline to each detail row for structure
         if (i % 2 === 0 && row < 3) {
             ctx.strokeStyle = '#f1f5f9'; ctx.lineWidth = 3;
             ctx.beginPath(); ctx.moveTo(65, yCoord + 80); ctx.lineTo(CR80_W - 65, yCoord + 80); ctx.stroke();
@@ -405,7 +405,6 @@ async function renderCard() {
     });
 }
 
-// ── Non-blocking toast notification ──────────────────────────────────────────
 function showToast(msg, type = 'warning') {
     const container = document.getElementById('toastContainer');
     if (!container) return console.warn('Toast container not found');
@@ -413,22 +412,19 @@ function showToast(msg, type = 'warning') {
     toast.className = `toast toast-${type}`;
     toast.textContent = msg;
     container.appendChild(toast);
-    // Trigger animation
     requestAnimationFrame(() => toast.classList.add('toast-visible'));
-    // Auto-dismiss after 5 seconds
     setTimeout(() => {
         toast.classList.remove('toast-visible');
         setTimeout(() => toast.remove(), 400);
     }, 5000);
 }
 
-// ── Fault-tolerant save (fire-and-forget, never blocks UI) ───────────────────
 async function saveToBackend() {
     if (isSaving || isSaved) return;
     isSaving = true;
 
     const data = getFormData();
-    data.photoPath = capturedCloudDataURL || capturedPhotoDataURL; // Use compressed version for cloud
+    data.photoPath = capturedCloudDataURL || capturedPhotoDataURL;
     data.site = operator.site || '';
     data.operator = operator.name || '';
 
@@ -443,7 +439,6 @@ async function saveToBackend() {
         });
         const result = await resp.json();
 
-        // Backend now always returns 200, but may include warnings
         isSaved = true;
 
         if (result.warnings && result.warnings.length > 0) {
@@ -453,10 +448,9 @@ async function saveToBackend() {
             console.log('Saved to backend success:', result);
         }
     } catch (err) {
-        // Network error, server down, etc. — NEVER block the operator
         console.error('Backend save failed:', err.message);
         showToast('⚠ Record not saved to cloud, but card generated locally.', 'warning');
-        isSaved = true; // Mark as "handled" so UI isn't blocked
+        isSaved = true;
     } finally {
         isSaving = false;
         console.log('--- Submission Request End ---');
@@ -465,11 +459,28 @@ async function saveToBackend() {
 
 function updateBatchUI() {
     batchList.innerHTML = '';
-    batchQueue.forEach(item => {
-        const img = new Image(); img.src = item.snap; img.className = 'batch-item';
-        batchList.appendChild(img);
+    batchQueue.forEach((item, idx) => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'batch-item-wrapper';
+        wrapper.onclick = () => showEnlargedPreview(idx);
+
+        const img = new Image();
+        img.src = item.snap;
+        img.className = 'batch-item';
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'btn-remove-batch';
+        removeBtn.innerHTML = '&times;';
+        removeBtn.onclick = (e) => {
+            e.stopPropagation();
+            removeFromBatch(idx);
+        };
+
+        wrapper.appendChild(img);
+        wrapper.appendChild(removeBtn);
+        batchList.appendChild(wrapper);
     });
-    // Persist ONLY the tiny proxy snapshots to localStorage (never the full-res print data)
+
     try {
         localStorage.setItem('ep_batch', JSON.stringify(batchQueue));
     } catch (e) {
@@ -477,13 +488,54 @@ function updateBatchUI() {
     }
     document.querySelector('.batch-card .section-title').textContent = `Batch Queue (${batchQueue.length}/9)`;
     btnPrintBatch.disabled = batchQueue.length === 0;
+
+    // Update layout state if batch exists but we are not in preview
+    const mainMain = document.querySelector('.app-main');
+    if (batchQueue.length > 0 && mainMain.classList.contains('layout-initial')) {
+        mainMain.classList.remove('layout-initial');
+        mainMain.classList.add('layout-batch');
+    } else if (batchQueue.length === 0 && mainMain.classList.contains('layout-batch')) {
+        mainMain.classList.remove('layout-batch');
+        mainMain.classList.add('layout-initial');
+    }
+
+    // Pre-populate print area for instant printing
+    updatePrintArea();
+}
+
+function removeFromBatch(idx) {
+    batchQueue.splice(idx, 1);
+    batchPrintQueue.splice(idx, 1);
+    updateBatchUI();
+}
+
+function showEnlargedPreview(idx) {
+    const item = batchPrintQueue[idx] || batchQueue[idx];
+    if (!item) return;
+    document.getElementById('enlargedImg').src = item.snap;
+    document.getElementById('previewModal').style.display = 'flex';
+    document.getElementById('btnDownloadEnlarged').onclick = () => {
+        const link = document.createElement('a');
+        link.download = `Batch_Pass_${idx + 1}.png`;
+        link.href = item.snap;
+        link.click();
+    };
+}
+
+function updatePrintArea() {
+    batchPrintArea.innerHTML = '';
+    const printSource = batchPrintQueue.length > 0 ? batchPrintQueue : batchQueue;
+    printSource.forEach(item => {
+        const img = new Image();
+        img.src = item.snap;
+        batchPrintArea.appendChild(img);
+    });
 }
 
 function nextEntry() {
     passForm.reset();
     ageInput.value = '';
 
-    // Clear Step 2 fields manually (not in passForm)
     document.getElementById('contractor').value = '';
     document.getElementById('laborCamp').value = '';
     document.getElementById('designation').value = '';
@@ -509,6 +561,21 @@ function nextEntry() {
 
     isSaved = false;
     isInBatch = false;
+
+    btnStart.style.display = 'inline-flex';
+    btnStart.textContent = 'Turn On Camera';
+    btnCapture.style.display = 'none';
+    btnRetake.style.display = 'none';
+    btnGenerate.style.display = 'none';
+
+    const mainMain = document.querySelector('.app-main');
+    mainMain.classList.remove('layout-preview');
+    if (batchQueue.length > 0) {
+        mainMain.classList.remove('layout-initial');
+        mainMain.classList.add('layout-batch');
+    } else {
+        mainMain.classList.add('layout-initial');
+    }
 
     goToStep(1);
 }
@@ -563,7 +630,7 @@ async function loadSiteRecords() {
 function exportSiteToExcel() {
     const table = document.getElementById('siteRecordsTable');
     const rows = table.querySelectorAll('tr');
-    const SKIP_COLS = new Set([0]); // Skip Photo column
+    const SKIP_COLS = new Set([0]);
     let csv = '';
 
     rows.forEach(row => {
@@ -586,7 +653,6 @@ function exportSiteToExcel() {
 document.addEventListener('DOMContentLoaded', () => {
     initSession();
 
-    // Event listeners for site records
     const btnViewRecords = document.getElementById('btnViewRecords');
     const btnExportSiteExcel = document.getElementById('btnExportSiteExcel');
     const closeRecords = document.getElementById('closeRecords');
@@ -618,7 +684,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btnStart.onclick = startCamera;
     btnCapture.onclick = capturePhoto;
-    btnRetake.onclick = () => { capturedPhotoDataURL = null; startCamera(); };
+    btnRetake.onclick = () => {
+        capturedPhotoDataURL = null;
+        btnGenerate.style.display = 'none';
+        startCamera();
+    };
 
     btnGenerate.onclick = async () => {
         const v1 = validateStep(1); if (v1 !== true) return (goToStep(1), showAlert(v1));
@@ -628,7 +698,6 @@ document.addEventListener('DOMContentLoaded', () => {
         btnGenerate.disabled = true;
         btnGenerate.textContent = 'Checking...';
 
-        // ── Duplicate Check ──────────────────────────────────────────────────
         const data = getFormData();
         const dup = await checkDuplicate(data.aadhar, data.contact);
         if (dup) {
@@ -643,8 +712,10 @@ document.addEventListener('DOMContentLoaded', () => {
         btnGenerate.textContent = 'Rendering...';
         await renderCard();
 
-        // Show card and ALL buttons immediately — never wait for backend
-        if (canvasEmpty) canvasEmpty.style.display = 'none';
+        // Reveal Preview and adjust layout
+        const mainMain = document.querySelector('.app-main');
+        mainMain.classList.remove('layout-initial', 'layout-batch');
+        mainMain.classList.add('layout-preview');
         idCard.style.display = 'block';
         previewActions.style.display = 'flex';
         const bottomActions = document.getElementById('bottomActions');
@@ -653,7 +724,6 @@ document.addEventListener('DOMContentLoaded', () => {
         btnGenerate.disabled = false;
         btnGenerate.textContent = 'Generate Pass';
 
-        // Fire-and-forget: save to backend asynchronously, never blocking the operator
         saveToBackend();
     };
 
@@ -680,13 +750,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (batchQueue.length >= 9) return showAlert('Batch full.');
 
-        // Store TINY proxy for preview/localStorage
+        // Store high-quality proxy for batch grid preview and localStorage
         const proxyCanvas = document.createElement('canvas');
-        proxyCanvas.width = CR80_W / 4.5;
-        proxyCanvas.height = CR80_H / 4.5;
+        proxyCanvas.width = CR80_W;
+        proxyCanvas.height = CR80_H;
         const pCtx = proxyCanvas.getContext('2d');
         pCtx.drawImage(idCard, 0, 0, proxyCanvas.width, proxyCanvas.height);
-        batchQueue.push({ snap: proxyCanvas.toDataURL('image/jpeg', 0.4) });
+        batchQueue.push({ snap: proxyCanvas.toDataURL('image/jpeg', 0.92) });
 
         // Store FULL RESOLUTION PNG for actual printing (in-memory only, never touches localStorage)
         batchPrintQueue.push({ snap: idCard.toDataURL('image/png') });
@@ -705,26 +775,18 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     btnNextEntry.onclick = nextEntry;
-    btnClearBatch.onclick = () => { batchQueue = []; batchPrintQueue = []; updateBatchUI(); };
+    btnClearBatch.onclick = () => {
+        if (confirm("Clear all items in batch?")) {
+            batchQueue = []; batchPrintQueue = []; updateBatchUI();
+        }
+    };
     btnPrintBatch.onclick = () => {
-        batchPrintArea.innerHTML = '';
-        // Use FULL RESOLUTION images for printing, not the tiny proxies
-        const printSource = batchPrintQueue.length > 0 ? batchPrintQueue : batchQueue;
-        const promises = printSource.map(item => {
-            return new Promise((res) => {
-                const img = new Image();
-                img.onload = res;
-                img.src = item.snap;
-                batchPrintArea.appendChild(img);
-            });
-        });
-        Promise.all(promises).then(() => {
-            setTimeout(() => window.print(), 500);
-        });
+        // Area is already pre-populated by updateBatchUI/updatePrintArea
+        window.print();
     };
 
-    document.getElementById('closeAlert').onclick = () => {
-        document.getElementById('customAlert').style.display = 'none';
+    document.getElementById('closePreview').onclick = () => {
+        document.getElementById('previewModal').style.display = 'none';
     };
 
     // Print Batch button inside the batch-full alert modal
