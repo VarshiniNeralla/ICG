@@ -848,8 +848,8 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     btnNextEntry.onclick = nextEntry;
-    btnClearBatch.onclick = () => {
-        if (confirm("Clear all items in batch?")) {
+    btnClearBatch.onclick = async () => {
+        if (await showConfirm("Are you sure you want to clear all items in the batch?")) {
             batchQueue = []; batchPrintQueue = []; updateBatchUI();
         }
     };
