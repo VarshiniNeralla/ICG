@@ -26,6 +26,17 @@ const loginScreen = document.getElementById('adminLogin');
 const dashboard = document.getElementById('adminDashboard');
 const loginForm = document.getElementById('adminLoginForm');
 const loginError = document.getElementById('loginError');
+const toggleAdminPassword = document.getElementById('toggleAdminPassword');
+const adminPassInput = document.getElementById('adminPass');
+
+if (toggleAdminPassword) {
+    toggleAdminPassword.onclick = () => {
+        const type = adminPassInput.getAttribute('type') === 'password' ? 'text' : 'password';
+        adminPassInput.setAttribute('type', type);
+        toggleAdminPassword.querySelector('svg').style.color = type === 'text' ? 'var(--primary)' : 'var(--text-light)';
+    };
+}
+
 
 // ------ LOGIN ------
 loginForm.onsubmit = (e) => {

@@ -20,19 +20,41 @@
         <div class="login-card">
             <div class="login-header">
                 <img src="assets/My_Home_Constructions_logo.webp" alt="Logo" class="login-logo" />
-                <h2>Entry Pass Login</h2>
-                <p>Enter operator details to continue</p>
+                <h2>Operator Login</h2>
+                <p style="font-size: 0.8em;">Enter operator details to continue</p>
             </div>
             <form id="loginForm">
                 <div class="field-group">
-                    <label>Operator Name</label>
-                    <input type="text" id="operatorName" placeholder="Name" required />
+                    <label>Username</label>
+                    <select id="username" required>
+                        <option value="">Select Username</option>
+                        <option value="CSO-Akrida">CSO-Akrida</option>
+                        <option value="CSO-Apas">CSO-Apas</option>
+                        <option value="CSO-Avali">CSO-Avali</option>
+                        <option value="CSO-Grava Commercial">CSO-Grava Commercial</option>
+                        <option value="CSO-Grava Residences">CSO-Grava Residences</option>
+                        <option value="CSO-Sayuk">CSO-Sayuk</option>
+                        <option value="CSO-Udyan">CSO-Udyan</option>
+                        <option value="CSO-Vipina">CSO-Vipina</option>
+                        <option value="CSO-Vyoma">CSO-Vyoma</option>
+                        <option value="CSO-99">CSO-99</option>
+                    </select>
                 </div>
                 <div class="field-group">
-                    <label>Site Selection</label>
-                    <select id="siteSelect" required>
-                        <option value="">Select Site</option>
-                    </select>
+                    <label>Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="password" placeholder="••••••••" required />
+                        <button type="button" id="togglePassword" class="toggle-password" title="Show/Hide Password">
+                            <svg id="eyeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="loginSiteDisplay"
+                        style="margin-top: 0.5rem; font-size: 0.85rem; font-weight: 700; color: #10b981; min-height: 1.2rem; text-align: center;">
+                    </div>
                 </div>
                 <button type="submit" class="btn btn-primary btn-block">Login</button>
                 <p style="text-align:center; margin-top:1.5rem; font-size:0.8rem;">
@@ -190,7 +212,7 @@
                                 </div>
                                 <div class="step-actions">
                                     <button type="button" id="btnToStep3" class="btn btn-primary btn-block">Next: Photo
-                                        </button>
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -318,7 +340,6 @@
                                 <th>Camp</th>
                                 <th>Designation</th>
                                 <th>Contact</th>
-                                <th>Operator</th>
                                 <th>Induction</th>
                                 <th>Validity</th>
                                 <th>Issue Date</th>

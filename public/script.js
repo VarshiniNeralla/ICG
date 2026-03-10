@@ -2,7 +2,7 @@
 
 const CR80_W = 1100;
 const CR80_H = 1500;
-const PRINT_SCALE = 2; // Internal resolution multiplier for print quality (2x = ~430 DPI)
+const PRINT_SCALE = 2;
 const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? 'http://localhost:5000'
     : window.location.origin;
@@ -13,7 +13,6 @@ const SITE_CONFIG = {
     'Vipina': { tint: 'rgba(220,53,69,0.07)', code: 'VIPINA' }
 };
 
-// Internal utility to generate a unique code for new sites
 function getSiteCode(siteName) {
     if (SITE_CONFIG[siteName]) return SITE_CONFIG[siteName].code;
     return siteName.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 8);
@@ -46,7 +45,6 @@ async function populateDropdowns() {
     const cSel = document.getElementById('contractor');
     const dSel = document.getElementById('designation');
 
-    // Preserve currently selected values to avoid overriding active selections
     const curSite = sSel ? sSel.value : '';
     const curContractor = cSel ? cSel.value : '';
     const curRole = dSel ? dSel.value : '';
@@ -65,32 +63,30 @@ async function populateDropdowns() {
     }
 }
 
-// Implement auto-refresh logic
-setInterval(populateDropdowns, 30000); // refresh every 30 secs
+setInterval(populateDropdowns, 30000);
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
         populateDropdowns();
     }
 });
 
-// ── Tab Closure Safeguard ────────────────────────────────────────────────────
 window.addEventListener('beforeunload', (e) => {
     if (batchQueue && batchQueue.length > 0) {
         e.preventDefault();
-        e.returnValue = ''; // Triggers standard browser "Leave site?" dialog
+        e.returnValue = '';
     }
 });
 
 let operator = { name: '', site: '' };
 let capturedPhotoDataURL = null;
 let currentStep = 1;
-let batchQueue = []; // Tiny proxies for preview + localStorage
-let batchPrintQueue = []; // Full-resolution images for actual printing (in-memory only)
+let batchQueue = [];
+let batchPrintQueue = [];
 let stream = null;
 let isSaved = false;
 let isInBatch = false;
-let isSaving = false; // Submission lock to prevent duplicates
-let capturedCloudDataURL = null; // Compressed version for cloud upload
+let isSaving = false;
+let capturedCloudDataURL = null;
 
 const loginScreen = document.getElementById('loginScreen');
 const mainApp = document.getElementById('mainApp');
@@ -134,6 +130,41 @@ const btnClearBatch = document.getElementById('btnClearBatch');
 const btnPrintBatch = document.getElementById('btnPrintBatch');
 const batchPrintArea = document.getElementById('batchPrintArea');
 
+const usernameInput = document.getElementById('username');
+const passwordInput = document.getElementById('password');
+const loginSiteDisplay = document.getElementById('loginSiteDisplay');
+
+const getSiteFromUser = (user) => {
+    if (!user || !user.startsWith('CSO-')) return null;
+    return user.replace('CSO-', '');
+};
+
+if (usernameInput) {
+    usernameInput.onchange = () => {
+        const site = getSiteFromUser(usernameInput.value);
+        if (site) {
+            loginSiteDisplay.textContent = `Selected site is : ${site}`;
+        } else {
+            loginSiteDisplay.textContent = '';
+        }
+    };
+}
+
+const btnTogglePassword = document.getElementById('togglePassword');
+const eyeIcon = document.getElementById('eyeIcon');
+if (btnTogglePassword) {
+    btnTogglePassword.onclick = () => {
+        const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
+        passwordInput.setAttribute('type', type);
+
+        if (type === 'text') {
+            eyeIcon.style.color = 'var(--primary)';
+        } else {
+            eyeIcon.style.color = 'var(--text-light)';
+        }
+    };
+}
+
 function initSession() {
     const savedOp = localStorage.getItem('ep_operator');
     if (savedOp) {
@@ -153,14 +184,28 @@ function initSession() {
 
 loginForm.onsubmit = (e) => {
     e.preventDefault();
-    const name = document.getElementById('operatorName').value.trim();
-    const site = document.getElementById('siteSelect').value;
+    const username = usernameInput.value.trim();
+    const password = passwordInput.value;
+    const site = getSiteFromUser(username);
 
-    if (!name || !site) return;
+    if (!site) {
+        showAlert('Invalid Username format. Please select from the dropdown.');
+        return;
+    }
 
-    operator = { name, site };
-    localStorage.setItem('ep_operator', JSON.stringify(operator)); // Persist
-    operatorInfo.innerHTML = `Site: <strong>${site}</strong> | Op: <strong>${name}</strong>`;
+    let siteBase = site.split(' ')[0].toLowerCase();
+    let expectedPassword = `${siteBase}@mhc26`;
+    if (site === 'Grava Residences') expectedPassword = 'gravar@mhc26';
+    if (site === 'Grava Commercial') expectedPassword = 'gravac@mhc26';
+
+    if (password !== expectedPassword) {
+        showAlert('Invalid password, retry with correct one.');
+        return;
+    }
+
+    operator = { name: username, site: site };
+    localStorage.setItem('ep_operator', JSON.stringify(operator));
+    operatorInfo.innerHTML = `Site: <strong>${site}</strong> | Op: <strong>${username}</strong>`;
     loginScreen.style.display = 'none';
     mainApp.style.display = 'block';
 
@@ -205,11 +250,10 @@ const getFormData = () => ({
 const loadImage = (src) => new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = src; });
 const formatDate = (d) => {
     if (!d) return '---';
-    // If already in dd-mm-yyyy format, return as is to prevent double-formatting/inversion
     if (typeof d === 'string' && /^\d{2}-\d{2}-\d{4}$/.test(d)) return d;
 
     const date = new Date(d);
-    if (isNaN(date.getTime())) return d; // Return raw (like already formatted)
+    if (isNaN(date.getTime())) return d;
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = date.getFullYear();
@@ -269,9 +313,7 @@ function capturePhoto() {
     croppedPhoto.width = vw;
     croppedPhoto.height = vh;
     croppedPhoto.getContext('2d').drawImage(video, 0, 0, vw, vh);
-    // Keep FULL quality for canvas rendering (print clarity)
     const fullQualityDataURL = croppedPhoto.toDataURL('image/jpeg', 0.95);
-    // Compressed version for cloud upload (saves bandwidth/storage)
     const cloudDataURL = croppedPhoto.toDataURL('image/jpeg', 0.5);
     capturedPhotoDataURL = fullQualityDataURL;
     capturedCloudDataURL = cloudDataURL;
@@ -282,7 +324,7 @@ function capturePhoto() {
     btnRetake.style.display = 'inline-flex';
     btnGenerate.style.display = 'inline-flex';
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    btnStart.style.display = 'none'; // Hide Turn On Camera after capture
+    btnStart.style.display = 'none';
 }
 
 function drawWatermark(ctx) {
@@ -291,25 +333,19 @@ function drawWatermark(ctx) {
     const lastLetter = siteName.charAt(siteName.length - 1).toUpperCase();
     const watermarkText = `⟁ ${firstLetter} ✦ ${lastLetter} ⟁`;
 
-    // Dark navy blue watermark, lighter, recognizable but not overpowering opacity
     const tint = 'rgba(13, 34, 64, 0.22)';
 
     ctx.save();
-
-    // Unique dynamic rotation based on site code length for a "Site-Specific" tilt
     const code = getSiteCode(siteName);
-    const dynamicRotation = -25 - (code.length % 10); // Subtle variation between 25-35 degrees
+    const dynamicRotation = -25 - (code.length % 10);
     ctx.rotate(dynamicRotation * Math.PI / 180);
 
-    ctx.font = 'bold 46px Inter'; // Larger watermark
+    ctx.font = 'bold 46px Inter';
     ctx.fillStyle = tint;
-
-    // STAGGERED DIAMOND GRID: More unique and secure 
     const stepX = 360;
     const stepY = 160;
 
     for (let y = -CR80_H * 2; y < CR80_H * 3; y += stepY) {
-        // Offset every second row for a diamond-flow pattern
         const xOffset = (Math.abs(y / stepY) % 2 === 0) ? 0 : stepX / 2;
 
         for (let x = -CR80_W * 2; x < CR80_W * 3; x += stepX) {
@@ -323,19 +359,16 @@ async function renderCard() {
     const data = getFormData();
     const ctx = idCard.getContext('2d');
 
-    // Set canvas to 2x pixel resolution for high-DPI print quality
     idCard.width = CR80_W * PRINT_SCALE;
     idCard.height = CR80_H * PRINT_SCALE;
-    ctx.scale(PRINT_SCALE, PRINT_SCALE); // All coordinates stay the same, just rendered at 2x pixels
+    ctx.scale(PRINT_SCALE, PRINT_SCALE);
 
     ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, CR80_W, CR80_H);
     drawWatermark(ctx);
 
     ctx.strokeStyle = '#000000'; ctx.lineWidth = 14;
-    // Draw the border inset by 15px on all sides to prevent edge clipping during print
     ctx.strokeRect(15, 15, CR80_W - 30, CR80_H - 30);
 
-    // Header Background Box Setup (Aesthetic ID card structure)
     ctx.fillStyle = '#f0f4f8';
     ctx.fillRect(15, 15, CR80_W - 30, 110);
     ctx.beginPath();
@@ -344,12 +377,10 @@ async function renderCard() {
     ctx.stroke();
 
     ctx.textAlign = 'center'; ctx.font = '800 66px Inter'; ctx.fillStyle = '#1a3c6e';
-    // Constrain the contractor name max-width to 720px so it never collides with the 150px LC block on the right edge
     ctx.fillText(data.contractor.toUpperCase(), CR80_W / 2, 90, 720);
 
     ctx.textAlign = 'right'; ctx.font = 'bold 46px Inter';
     if (data.laborCamp === 'LC') {
-        // Draw a solid black box for the LC badge in top right corner to make it very distinct
         ctx.fillStyle = '#000000';
         ctx.fillRect(CR80_W - 165, 15, 150, 110);
         ctx.fillStyle = '#FFFFFF';
@@ -364,7 +395,6 @@ async function renderCard() {
         ctx.drawImage(ph, phX, phY, phW, phH);
         ctx.restore();
 
-        // Add border to photo itself for more structure
         ctx.strokeStyle = '#e2e8f0';
         ctx.lineWidth = 4;
         ctx.strokeRect(phX, phY, phW, phH);
@@ -373,11 +403,9 @@ async function renderCard() {
     ctx.textAlign = 'center'; ctx.fillStyle = '#0d2240';
     ctx.font = 'bold 58px Inter'; ctx.fillText(data.fullName.toUpperCase(), CR80_W / 2, phY + phH + 85);
 
-    // Role styling upgrade - badge style text
-    ctx.font = '800 44px Inter'; ctx.fillStyle = '#000000'; // Reverted to bold black
+    ctx.font = '800 44px Inter'; ctx.fillStyle = '#000000';
     ctx.fillText(data.designation.toUpperCase(), CR80_W / 2, phY + phH + 150);
 
-    // Separator line before details
     ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 4;
     ctx.beginPath(); ctx.moveTo(65, phY + phH + 200); ctx.lineTo(CR80_W - 65, phY + phH + 200); ctx.stroke();
 
@@ -489,7 +517,6 @@ function updateBatchUI() {
     document.querySelector('.batch-card .section-title').textContent = `Batch Queue (${batchQueue.length}/9)`;
     btnPrintBatch.disabled = batchQueue.length === 0;
 
-    // Update layout state if batch exists but we are not in preview
     const mainMain = document.querySelector('.app-main');
     if (batchQueue.length > 0 && mainMain.classList.contains('layout-initial')) {
         mainMain.classList.remove('layout-initial');
@@ -499,7 +526,6 @@ function updateBatchUI() {
         mainMain.classList.add('layout-initial');
     }
 
-    // Pre-populate print area for instant printing
     updatePrintArea();
 }
 
@@ -523,7 +549,6 @@ function showEnlargedPreview(idx) {
 }
 
 function updatePrintArea() {
-    // Legacy: keep #batchPrintArea in sync (used as fallback reference)
     batchPrintArea.innerHTML = '';
     const printSource = batchPrintQueue.length > 0 ? batchPrintQueue : batchQueue;
     printSource.forEach(item => {
@@ -537,12 +562,9 @@ function printBatch() {
     const printSource = batchPrintQueue.length > 0 ? batchPrintQueue : batchQueue;
     if (printSource.length === 0) return;
 
-    // Build grid cells HTML
     const cells = printSource.map(item =>
         `<div class="cell"><img src="${item.snap}" /></div>`
     ).join('');
-
-    // Open a fresh popup window with a self-contained print page
     const win = window.open('', '_blank', 'width=900,height=1100');
     win.document.write(`<!DOCTYPE html>
 <html>
@@ -582,14 +604,11 @@ function printBatch() {
 </html>`);
     win.document.close();
 
-    // Wait for images to load, then print
     win.onload = () => {
-        // Give browser a moment to render images before printing
         setTimeout(() => {
             win.focus();
             win.print();
             win.onafterprint = () => win.close();
-            // Fallback close in case onafterprint doesn't fire
             setTimeout(() => { try { win.close(); } catch (e) { } }, 5000);
         }, 500);
     };
@@ -648,10 +667,10 @@ async function loadSiteRecords() {
     const site = operator.site;
     if (!site) return;
 
-    document.getElementById('siteRecordsTitle').textContent = site;
+    document.getElementById('siteRecordsTitle').innerHTML = `${site} | Op: <strong>${operator.name}</strong>`;
     document.getElementById('recordsModal').style.display = 'flex';
     const tbody = document.getElementById('siteRecordsBody');
-    tbody.innerHTML = '<tr><td colspan="15" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
 
     try {
         const resp = await fetch(`${API_BASE}/api/employees?site=${encodeURIComponent(site)}`);
@@ -659,7 +678,7 @@ async function loadSiteRecords() {
         tbody.innerHTML = '';
 
         if (records.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="15" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="14" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
             return;
         }
 
@@ -678,7 +697,6 @@ async function loadSiteRecords() {
                 <td>${r.laborCamp || '---'}</td>
                 <td>${r.designation || '---'}</td>
                 <td>${r.contact || '---'}</td>
-                <td>${r.operator || '---'}</td>
                 <td>${formatDate(r.doi)}</td>
                 <td>${formatDate(r.validity)}</td>
                 <td>${formatDate(r.issueDate)}</td>`;
@@ -686,7 +704,7 @@ async function loadSiteRecords() {
         });
     } catch (err) {
         console.error('Failed to load site records:', err);
-        tbody.innerHTML = '<tr><td colspan="15" style="text-align:center; padding:2rem; color:red;">Error loading records.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="14" style="text-align:center; padding:2rem; color:red;">Error loading records.</td></tr>';
     }
 }
 

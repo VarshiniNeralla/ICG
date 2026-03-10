@@ -54,7 +54,7 @@ body {
 .login-logo {
     height: 50px;
     margin-bottom: 1.5rem;
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+    /* filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1)); */
 }
 
 .login-header h2 {
@@ -357,6 +357,37 @@ input[readonly] {
     color: var(--primary);
     border-color: transparent;
 }
+
+.password-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.toggle-password {
+    position: absolute;
+    right: 0.8rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: color 0.2s;
+    z-index: 10;
+}
+
+.toggle-password svg {
+    width: 18px;
+    height: 18px;
+}
+
+.toggle-password:hover {
+    color: var(--primary);
+}
+
 
 /* PHOTO MODULE */
 .webcam-module {
