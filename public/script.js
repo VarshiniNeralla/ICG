@@ -523,6 +523,7 @@ function showEnlargedPreview(idx) {
 }
 
 function updatePrintArea() {
+    // Legacy: keep #batchPrintArea in sync (used as fallback reference)
     batchPrintArea.innerHTML = '';
     const printSource = batchPrintQueue.length > 0 ? batchPrintQueue : batchQueue;
     printSource.forEach(item => {
@@ -530,6 +531,68 @@ function updatePrintArea() {
         img.src = item.snap;
         batchPrintArea.appendChild(img);
     });
+}
+
+function printBatch() {
+    const printSource = batchPrintQueue.length > 0 ? batchPrintQueue : batchQueue;
+    if (printSource.length === 0) return;
+
+    // Build grid cells HTML
+    const cells = printSource.map(item =>
+        `<div class="cell"><img src="${item.snap}" /></div>`
+    ).join('');
+
+    // Open a fresh popup window with a self-contained print page
+    const win = window.open('', '_blank', 'width=900,height=1100');
+    win.document.write(`<!DOCTYPE html>
+<html>
+<head>
+<title>Batch Print</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  @page { size: A4 portrait; margin: 0; }
+  html, body { width: 210mm; height: 297mm; background: white; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: 2mm;
+    padding: 4mm;
+    width: 210mm;
+    height: 297mm;
+    box-sizing: border-box;
+  }
+  .cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .cell img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+</style>
+</head>
+<body>
+<div class="grid">${cells}</div>
+</body>
+</html>`);
+    win.document.close();
+
+    // Wait for images to load, then print
+    win.onload = () => {
+        // Give browser a moment to render images before printing
+        setTimeout(() => {
+            win.focus();
+            win.print();
+            win.onafterprint = () => win.close();
+            // Fallback close in case onafterprint doesn't fire
+            setTimeout(() => { try { win.close(); } catch (e) { } }, 5000);
+        }, 500);
+    };
 }
 
 function nextEntry() {
@@ -742,6 +805,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btnPrint.onclick = () => {
         document.getElementById('printImg').src = idCard.toDataURL('image/png');
+        document.body.classList.add('print-single');
         window.print();
         // Attempt save in background if not already done
         if (!isSaved) saveToBackend();
@@ -783,10 +847,12 @@ document.addEventListener('DOMContentLoaded', () => {
             batchQueue = []; batchPrintQueue = []; updateBatchUI();
         }
     };
-    btnPrintBatch.onclick = () => {
-        // Area is already pre-populated by updateBatchUI/updatePrintArea
-        window.print();
-    };
+    btnPrintBatch.onclick = () => printBatch();
+
+    // Clean up body print classes after single-card print dialog closes
+    window.addEventListener('afterprint', () => {
+        document.body.classList.remove('print-single');
+    });
 
     document.getElementById('closePreview').onclick = () => {
         document.getElementById('previewModal').style.display = 'none';
