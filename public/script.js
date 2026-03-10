@@ -661,6 +661,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnExportSiteExcel) btnExportSiteExcel.onclick = exportSiteToExcel;
     if (closeRecords) closeRecords.onclick = () => document.getElementById('recordsModal').style.display = 'none';
 
+    const closeAlert = document.getElementById('closeAlert');
+    if (closeAlert) closeAlert.onclick = () => document.getElementById('customAlert').style.display = 'none';
+
     dobInput.onchange = () => {
         const b = new Date(dobInput.value), t = new Date();
         let a = t.getFullYear() - b.getFullYear();

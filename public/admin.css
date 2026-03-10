@@ -485,20 +485,6 @@ tbody tr:hover {
     gap: 1.5rem;
 }
 
-.manage-form {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-}
-
-.manage-form input {
-    flex: 1;
-    padding: 0.55rem 0.75rem;
-    border: 1.5px solid var(--border);
-    border-radius: 8px;
-    font-size: 0.85rem;
-}
-
 .manage-list {
     list-style: none;
     max-height: 300px;
@@ -513,15 +499,69 @@ tbody tr:hover {
     border-bottom: 1px solid var(--border);
     font-size: 0.85rem;
     font-weight: 500;
+    gap: 0.5rem;
+    transition: background 0.2s;
 }
 
 .manage-list li:last-child {
     border-bottom: none;
 }
 
+.manage-list li:hover {
+    background: #f8fafc;
+}
+
+.manage-list li span {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* In-place edit input */
+.manage-list li .inline-edit-input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.35rem 0.6rem;
+    border: 1.5px solid var(--primary);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    background: #fff;
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(26, 60, 110, 0.08);
+    transition: border-color 0.2s;
+}
+
+/* Success tick after inline edit */
+.inline-edit-success {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--success);
+    font-size: 0.75rem;
+    font-weight: 700;
+    animation: fadeInTick 0.3s ease;
+    white-space: nowrap;
+}
+
+@keyframes fadeInTick {
+    from {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
 .manage-actions {
     display: flex;
     gap: 0.35rem;
+    flex-shrink: 0;
 }
 
 .manage-actions button {
@@ -531,6 +571,12 @@ tbody tr:hover {
     cursor: pointer;
     font-size: 0.65rem;
     font-weight: 700;
+    transition: all 0.15s ease;
+}
+
+.manage-actions button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
 }
 
 .btn-edit {
@@ -541,6 +587,105 @@ tbody tr:hover {
 .btn-remove {
     background: var(--danger);
     color: white;
+}
+
+/* Inline edit action buttons */
+.btn-save-inline {
+    background: var(--success);
+    color: white;
+}
+
+.btn-cancel-inline {
+    background: #94a3b8;
+    color: white;
+}
+
+/* Add toggle button */
+.manage-add-area {
+    margin-top: 0.75rem;
+}
+
+.btn-add-toggle {
+    width: 100%;
+    padding: 0.6rem 1rem;
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 0.85rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-add-toggle:hover {
+    border-color: var(--primary);
+    background: rgba(26, 60, 110, 0.03);
+    transform: translateY(-1px);
+}
+
+/* Collapsible add form */
+.manage-add-form {
+    margin-top: 0.6rem;
+    animation: slideDown 0.25s ease;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.manage-add-form input {
+    width: 100%;
+    padding: 0.55rem 0.75rem;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+}
+
+.manage-add-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.manage-add-actions .btn {
+    flex: 1;
+    justify-content: center;
+}
+
+/* Success message for add */
+.add-success-msg {
+    display: block;
+    color: var(--success);
+    font-size: 0.78rem;
+    font-weight: 700;
+    margin-top: 0.5rem;
+    min-height: 1.2em;
+    animation: fadeInTick 0.3s ease;
+}
+
+/* Delete success message in list */
+.delete-success-msg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    padding: 0.6rem 0.75rem;
+    color: var(--success);
+    font-size: 0.8rem;
+    font-weight: 700;
+    animation: fadeInTick 0.3s ease;
+    background: rgba(16, 185, 129, 0.06);
+    border-radius: 6px;
 }
 
 /* SETTINGS */

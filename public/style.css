@@ -132,10 +132,11 @@ body {
     transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* 1. Initial / Next Entry: Form narrow and centered */
+/* 1. Initial / Next Entry: Form narrow on the left */
 .app-main.layout-initial {
     display: block;
     max-width: 750px;
+    margin: 0 0 0 3rem;
 }
 
 .app-main.layout-initial .panel-right {
@@ -154,20 +155,20 @@ body {
     gap: 1.5rem;
 }
 
-/* 3. Batch only: Form centered, Sidebar on the right */
+/* 3. Batch only: Form left, Batch sidebar next to it */
 .app-main.layout-batch {
-    grid-template-columns: 340px 1fr 340px;
-    max-width: 100%;
+    grid-template-columns: 1fr 340px;
+    max-width: 1100px;
+    margin-left: 11rem;
+    margin-right: auto;
 }
 
 .app-main.layout-batch .panel-left {
-    grid-column: 2;
-    max-width: 750px;
+    max-width: 700px;
     width: 100%;
 }
 
 .app-main.layout-batch .panel-right {
-    grid-column: 3;
     width: 340px;
     margin-top: 4.5rem;
     /* Align with form card (below the stepper) */
