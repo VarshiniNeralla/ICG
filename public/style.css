@@ -9,6 +9,7 @@
     --border: #e2e8f0;
     --radius: 12px;
     --success: #10b981;
+    --danger: #ef4444;
 }
 
 * {
@@ -657,6 +658,18 @@ input[readonly] {
     background: var(--success);
     color: white;
     box-shadow: 0 4px 14px rgba(16, 185, 129, 0.2);
+}
+
+.btn-danger {
+    background: var(--danger);
+    color: white;
+    border: none;
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.2);
+    /* Added a shadow similar to primary/success */
+}
+
+.btn-danger:hover {
+    filter: brightness(1.1);
 }
 
 .btn-generate {

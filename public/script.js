@@ -529,10 +529,12 @@ function updateBatchUI() {
     updatePrintArea();
 }
 
-function removeFromBatch(idx) {
-    batchQueue.splice(idx, 1);
-    batchPrintQueue.splice(idx, 1);
-    updateBatchUI();
+async function removeFromBatch(idx) {
+    if (await showConfirm('Are you sure you want to remove this card from the batch?')) {
+        batchQueue.splice(idx, 1);
+        batchPrintQueue.splice(idx, 1);
+        updateBatchUI();
+    }
 }
 
 function showEnlargedPreview(idx) {
@@ -560,16 +562,17 @@ function updatePrintArea() {
 
 function printBatch() {
     const printSource = batchPrintQueue.length > 0 ? batchPrintQueue : batchQueue;
-    if (printSource.length === 0) return;
+    popupPrint(printSource.map(i => i.snap), 'Batch Print');
+}
 
-    const cells = printSource.map(item =>
-        `<div class="cell"><img src="${item.snap}" /></div>`
-    ).join('');
+function popupPrint(images, title = 'Print') {
+    if (!images || images.length === 0) return;
+    const cells = images.map(img => `<div class="cell"><img src="${img}" /></div>`).join('');
     const win = window.open('', '_blank', 'width=900,height=1100');
     win.document.write(`<!DOCTYPE html>
 <html>
 <head>
-<title>Batch Print</title>
+<title>${title}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   @page { size: A4 portrait; margin: 0; }
@@ -584,26 +587,13 @@ function printBatch() {
     height: 297mm;
     box-sizing: border-box;
   }
-  .cell {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-  }
-  .cell img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    display: block;
-  }
+  .cell { display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .cell img { width: 100%; height: 100%; object-fit: contain; display: block; }
 </style>
 </head>
-<body>
-<div class="grid">${cells}</div>
-</body>
+<body><div class="grid">${cells}</div></body>
 </html>`);
     win.document.close();
-
     win.onload = () => {
         setTimeout(() => {
             win.focus();
@@ -822,9 +812,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     btnPrint.onclick = () => {
-        document.getElementById('printImg').src = idCard.toDataURL('image/png');
-        document.body.classList.add('print-single');
-        window.print();
+        popupPrint([idCard.toDataURL('image/png')], 'Single Pass Print');
         // Attempt save in background if not already done
         if (!isSaved) saveToBackend();
     };
@@ -955,6 +943,21 @@ function showDuplicateConfirm(dupData) {
             resolve(true);
         };
         btnCancel.onclick = () => {
+            modal.style.display = 'none';
+            resolve(false);
+        };
+    });
+}
+function showConfirm(msg) {
+    return new Promise((resolve) => {
+        document.getElementById('confirmMessage').textContent = msg;
+        const modal = document.getElementById('confirmModal');
+        modal.style.display = 'flex';
+        document.getElementById('confirmYes').onclick = () => {
+            modal.style.display = 'none';
+            resolve(true);
+        };
+        document.getElementById('confirmNo').onclick = () => {
             modal.style.display = 'none';
             resolve(false);
         };

@@ -313,6 +313,7 @@
         </div>
     </div>
 
+
     <!-- SITE RECORDS MODAL -->
     <div id="recordsModal" class="modal-overlay" style="display:none;">
         <div class="modal-content"
@@ -369,7 +370,8 @@
             </div>
             <div class="modal-footer">
                 <button type="button" id="btnCancelDuplicate" class="btn btn-secondary btn-sm">Cancel</button>
-                <button type="button" id="btnContinueDuplicate" class="btn btn-primary btn-sm">Continue anyway</button>
+                <button type="button" id="btnContinueDuplicate" class="btn btn-primary btn-sm">Continue
+                    anyway</button>
             </div>
         </div>
     </div>
@@ -384,6 +386,22 @@
             <img id="enlargedImg" class="enlarged-img" src="" alt="Enlarged Pass" />
             <button type="button" id="btnDownloadEnlarged" class="btn btn-secondary" style="margin-top:1rem;">Download
                 Pass</button>
+        </div>
+    </div>
+
+    <!-- CONFIRM MODAL -->
+    <div id="confirmModal" class="modal-overlay" style="display:none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Confirm</h3>
+            </div>
+            <div class="modal-body">
+                <p id="confirmMessage"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="confirmNo" class="btn btn-secondary btn-sm">Cancel</button>
+                <button type="button" id="confirmYes" class="btn btn-danger btn-sm">Delete</button>
+            </div>
         </div>
     </div>
 
