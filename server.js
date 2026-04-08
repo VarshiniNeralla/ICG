@@ -23,6 +23,24 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+const hasCloudinaryCreds = Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+    process.env.CLOUDINARY_API_KEY &&
+    process.env.CLOUDINARY_API_SECRET
+);
+
+if (!hasCloudinaryCreds) {
+    console.warn('WARNING: Cloudinary credentials are missing. Uploads may fail.');
+} else {
+    cloudinary.api.ping()
+        .then(() => {
+            console.log('Successfully connected to Cloudinary');
+        })
+        .catch((err) => {
+            console.error('WARNING: Could not connect to Cloudinary:', err.message);
+        });
+}
+
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
 
