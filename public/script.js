@@ -13,6 +13,16 @@ const SITE_CONFIG = {
     'Vipina': { tint: 'rgba(220,53,69,0.07)', code: 'VIPINA' }
 };
 
+// HTML escape helper to prevent XSS
+function esc(str) { const d = document.createElement('div'); d.textContent = str || ''; return d.innerHTML; }
+
+// Auth header helper
+function authHeaders(extra = {}) {
+    const headers = { ...extra };
+    if (operator.token) headers['Authorization'] = `Bearer ${operator.token}`;
+    return headers;
+}
+
 function getSiteCode(siteName) {
     if (SITE_CONFIG[siteName]) return SITE_CONFIG[siteName].code;
     return siteName.toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 8);
@@ -80,8 +90,7 @@ window.addEventListener('beforeunload', (e) => {
 let operator = { name: '', site: '' };
 let capturedPhotoDataURL = null;
 let currentStep = 1;
-let batchQueue = [];
-let batchPrintQueue = [];
+let batchQueue = [];       // Each item: { preview: jpegDataURL, print: pngDataURL }
 let stream = null;
 let isSaved = false;
 let isInBatch = false;
@@ -168,21 +177,31 @@ if (btnTogglePassword) {
 function initSession() {
     const savedOp = localStorage.getItem('ep_operator');
     if (savedOp) {
-        operator = JSON.parse(savedOp);
-        operatorInfo.innerHTML = `Site: <strong>${operator.site}</strong> | Op: <strong>${operator.name}</strong>`;
-        loginScreen.style.display = 'none';
-        mainApp.style.display = 'block';
-        setDefaultDates();
+        try {
+            operator = JSON.parse(savedOp);
+            operatorInfo.innerHTML = `Site: <strong>${esc(operator.site)}</strong> | Op: <strong>${esc(operator.name)}</strong>`;
+            loginScreen.style.display = 'none';
+            mainApp.style.display = 'block';
+            setDefaultDates();
+        } catch {
+            console.warn('Corrupted operator session data, clearing.');
+            localStorage.removeItem('ep_operator');
+        }
     }
     const savedBatch = localStorage.getItem('ep_batch');
     if (savedBatch) {
-        batchQueue = JSON.parse(savedBatch);
-        updateBatchUI();
+        try {
+            batchQueue = JSON.parse(savedBatch);
+            updateBatchUI();
+        } catch {
+            console.warn('Corrupted batch data, clearing.');
+            localStorage.removeItem('ep_batch');
+        }
     }
     populateDropdowns();
 }
 
-loginForm.onsubmit = (e) => {
+loginForm.onsubmit = async (e) => {
     e.preventDefault();
     const username = usernameInput.value.trim();
     const password = passwordInput.value;
@@ -193,23 +212,27 @@ loginForm.onsubmit = (e) => {
         return;
     }
 
-    let siteBase = site.split(' ')[0].toLowerCase();
-    let expectedPassword = `${siteBase}@mhc26`;
-    if (site === 'Grava Residences') expectedPassword = 'gravar@mhc26';
-    if (site === 'Grava Commercial') expectedPassword = 'gravac@mhc26';
+    try {
+        const resp = await fetch(`${API_BASE}/api/auth/operator`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const result = await resp.json();
+        if (!resp.ok) {
+            showAlert(result.error || 'Invalid credentials.');
+            return;
+        }
 
-    if (password !== expectedPassword) {
-        showAlert('Invalid password, retry with correct one.');
-        return;
+        operator = { name: username, site: site, token: result.token };
+        localStorage.setItem('ep_operator', JSON.stringify(operator));
+        operatorInfo.innerHTML = `Site: <strong>${esc(site)}</strong> | Op: <strong>${esc(username)}</strong>`;
+        loginScreen.style.display = 'none';
+        mainApp.style.display = 'block';
+        setDefaultDates();
+    } catch (err) {
+        showAlert('Login failed. Please check your connection and try again.');
     }
-
-    operator = { name: username, site: site };
-    localStorage.setItem('ep_operator', JSON.stringify(operator));
-    operatorInfo.innerHTML = `Site: <strong>${site}</strong> | Op: <strong>${username}</strong>`;
-    loginScreen.style.display = 'none';
-    mainApp.style.display = 'block';
-
-    setDefaultDates();
 };
 
 function setDefaultDates() {
@@ -296,6 +319,8 @@ function goToStep(step) {
 
 async function startCamera() {
     try {
+        // Stop any existing stream before requesting a new one
+        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 800, height: 1000 } });
         video.srcObject = stream;
         video.style.display = 'block';
@@ -389,15 +414,19 @@ async function renderCard() {
 
     const phY = 160, phW = 435, phH = 575, phX = (CR80_W - phW) / 2;
     if (capturedPhotoDataURL) {
-        const ph = await loadImage(capturedPhotoDataURL);
-        ctx.save();
-        ctx.beginPath(); ctx.roundRect(phX, phY, phW, phH, 15); ctx.clip();
-        ctx.drawImage(ph, phX, phY, phW, phH);
-        ctx.restore();
+        try {
+            const ph = await loadImage(capturedPhotoDataURL);
+            ctx.save();
+            ctx.beginPath(); ctx.roundRect(phX, phY, phW, phH, 15); ctx.clip();
+            ctx.drawImage(ph, phX, phY, phW, phH);
+            ctx.restore();
 
-        ctx.strokeStyle = '#e2e8f0';
-        ctx.lineWidth = 4;
-        ctx.strokeRect(phX, phY, phW, phH);
+            ctx.strokeStyle = '#e2e8f0';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(phX, phY, phW, phH);
+        } catch {
+            console.warn('Photo load failed, rendering card without photo.');
+        }
     }
 
     ctx.textAlign = 'center'; ctx.fillStyle = '#0d2240';
@@ -462,9 +491,10 @@ async function saveToBackend() {
     try {
         const resp = await fetch(`${API_BASE}/api/save-employee`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify(data)
         });
+        if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
         const result = await resp.json();
 
         isSaved = true;
@@ -473,12 +503,11 @@ async function saveToBackend() {
             console.warn('Backend warnings:', result.warnings);
             showToast('⚠ Warning: ' + result.warnings[0], 'warning');
         } else {
-            console.log('Saved to backend success:', result);
+            showToast('Record saved successfully!', 'success');
         }
     } catch (err) {
         console.error('Backend save failed:', err.message);
         showToast('⚠ Record not saved to cloud, but card generated locally.', 'warning');
-        isSaved = true;
     } finally {
         isSaving = false;
         console.log('--- Submission Request End ---');
@@ -493,7 +522,7 @@ function updateBatchUI() {
         wrapper.onclick = () => showEnlargedPreview(idx);
 
         const img = new Image();
-        img.src = item.snap;
+        img.src = item.preview;
         img.className = 'batch-item';
 
         const removeBtn = document.createElement('button');
@@ -510,7 +539,9 @@ function updateBatchUI() {
     });
 
     try {
-        localStorage.setItem('ep_batch', JSON.stringify(batchQueue));
+        // Only persist preview data to localStorage (print data is too large)
+        const storable = batchQueue.map(item => ({ preview: item.preview }));
+        localStorage.setItem('ep_batch', JSON.stringify(storable));
     } catch (e) {
         console.warn('Batch too large for localStorage, keeping in memory only.');
     }
@@ -532,43 +563,42 @@ function updateBatchUI() {
 async function removeFromBatch(idx) {
     if (await showConfirm('Are you sure you want to remove this card from the batch?')) {
         batchQueue.splice(idx, 1);
-        batchPrintQueue.splice(idx, 1);
         updateBatchUI();
     }
 }
 
 function showEnlargedPreview(idx) {
-    const item = batchPrintQueue[idx] || batchQueue[idx];
+    const item = batchQueue[idx];
     if (!item) return;
-    document.getElementById('enlargedImg').src = item.snap;
+    const src = item.print || item.preview;
+    document.getElementById('enlargedImg').src = src;
     document.getElementById('previewModal').style.display = 'flex';
     document.getElementById('btnDownloadEnlarged').onclick = () => {
         const link = document.createElement('a');
         link.download = `Batch_Pass_${idx + 1}.png`;
-        link.href = item.snap;
+        link.href = src;
         link.click();
     };
 }
 
 function updatePrintArea() {
     batchPrintArea.innerHTML = '';
-    const printSource = batchPrintQueue.length > 0 ? batchPrintQueue : batchQueue;
-    printSource.forEach(item => {
+    batchQueue.forEach(item => {
         const img = new Image();
-        img.src = item.snap;
+        img.src = item.print || item.preview;
         batchPrintArea.appendChild(img);
     });
 }
 
 function printBatch() {
-    const printSource = batchPrintQueue.length > 0 ? batchPrintQueue : batchQueue;
-    popupPrint(printSource.map(i => i.snap), 'Batch Print');
+    popupPrint(batchQueue.map(i => i.print || i.preview), 'Batch Print');
 }
 
 function popupPrint(images, title = 'Print') {
     if (!images || images.length === 0) return;
     const cells = images.map(img => `<div class="cell"><img src="${img}" /></div>`).join('');
     const win = window.open('', '_blank', 'width=900,height=1100');
+    if (!win) { showAlert('Pop-up blocked by browser. Please allow pop-ups to print.'); return; }
     win.document.write(`<!DOCTYPE html>
 <html>
 <head>
@@ -594,17 +624,25 @@ function popupPrint(images, title = 'Print') {
 <body><div class="grid">${cells}</div></body>
 </html>`);
     win.document.close();
-    win.onload = () => {
-        setTimeout(() => {
-            win.focus();
-            win.print();
-            win.onafterprint = () => win.close();
-            setTimeout(() => { try { win.close(); } catch (e) { } }, 5000);
-        }, 500);
+    let printed = false;
+    const doPrint = () => {
+        if (printed) return;
+        printed = true;
+        win.focus();
+        win.print();
+        win.onafterprint = () => { try { win.close(); } catch (e) { } };
+        setTimeout(() => { try { win.close(); } catch (e) { } }, 10000);
     };
+    win.onload = () => setTimeout(doPrint, 300);
+    // Fallback if onload doesn't fire (slow rendering / some browsers)
+    setTimeout(doPrint, 3000);
 }
 
 function nextEntry() {
+    if (isSaving) {
+        showToast('Please wait — record is being saved...', 'warning');
+        return;
+    }
     passForm.reset();
     ageInput.value = '';
 
@@ -657,14 +695,18 @@ async function loadSiteRecords() {
     const site = operator.site;
     if (!site) return;
 
-    document.getElementById('siteRecordsTitle').innerHTML = `${site} | Op: <strong>${operator.name}</strong>`;
+    document.getElementById('siteRecordsTitle').innerHTML = `${esc(site)} | Op: <strong>${esc(operator.name)}</strong>`;
     document.getElementById('recordsModal').style.display = 'flex';
     const tbody = document.getElementById('siteRecordsBody');
     tbody.innerHTML = '<tr><td colspan="14" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
 
     try {
-        const resp = await fetch(`${API_BASE}/api/employees?site=${encodeURIComponent(site)}`);
-        const records = await resp.json();
+        const resp = await fetch(`${API_BASE}/api/employees?site=${encodeURIComponent(site)}`, {
+            headers: authHeaders()
+        });
+        if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+        const result = await resp.json();
+        const records = result.data || result;
         tbody.innerHTML = '';
 
         if (records.length === 0) {
@@ -676,20 +718,20 @@ async function loadSiteRecords() {
             const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API_BASE}/${r.photoPath.replace(/\\/g, '/')}`) : '';
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${photoSrc ? `<img src="${photoSrc}" style="width:40px; height:50px; border-radius:4px; object-fit:cover;" />` : 'N/A'}</td>
-                <td>${r.fullName || '---'}</td>
-                <td>${r.aadhar || '---'}</td>
-                <td>${r.age || '---'}</td>
-                <td>${r.gender || '---'}</td>
-                <td>${formatDate(r.dob)}</td>
-                <td>${r.bloodGroup || '---'}</td>
-                <td>${r.contractor || '---'}</td>
-                <td>${r.laborCamp || '---'}</td>
-                <td>${r.designation || '---'}</td>
-                <td>${r.contact || '---'}</td>
-                <td>${formatDate(r.doi)}</td>
-                <td>${formatDate(r.validity)}</td>
-                <td>${formatDate(r.issueDate)}</td>`;
+                <td>${photoSrc ? `<img src="${esc(photoSrc)}" style="width:40px; height:50px; border-radius:4px; object-fit:cover;" />` : 'N/A'}</td>
+                <td>${esc(r.fullName) || '---'}</td>
+                <td>${esc(r.aadhar) || '---'}</td>
+                <td>${esc(r.age) || '---'}</td>
+                <td>${esc(r.gender) || '---'}</td>
+                <td>${esc(formatDate(r.dob))}</td>
+                <td>${esc(r.bloodGroup) || '---'}</td>
+                <td>${esc(r.contractor) || '---'}</td>
+                <td>${esc(r.laborCamp) || '---'}</td>
+                <td>${esc(r.designation) || '---'}</td>
+                <td>${esc(r.contact) || '---'}</td>
+                <td>${esc(formatDate(r.doi))}</td>
+                <td>${esc(formatDate(r.validity))}</td>
+                <td>${esc(formatDate(r.issueDate))}</td>`;
             tbody.appendChild(tr);
         });
     } catch (err) {
@@ -719,6 +761,7 @@ function exportSiteToExcel() {
     link.href = URL.createObjectURL(blob);
     link.download = `SiteRecords_${operator.site.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -823,16 +866,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (batchQueue.length >= 9) return showAlert('Batch full.');
 
-        // Store high-quality proxy for batch grid preview and localStorage
+        // Store preview (JPEG for localStorage) and print (PNG, memory-only) together
         const proxyCanvas = document.createElement('canvas');
         proxyCanvas.width = CR80_W;
         proxyCanvas.height = CR80_H;
         const pCtx = proxyCanvas.getContext('2d');
         pCtx.drawImage(idCard, 0, 0, proxyCanvas.width, proxyCanvas.height);
-        batchQueue.push({ snap: proxyCanvas.toDataURL('image/jpeg', 0.92) });
-
-        // Store FULL RESOLUTION PNG for actual printing (in-memory only, never touches localStorage)
-        batchPrintQueue.push({ snap: idCard.toDataURL('image/png') });
+        batchQueue.push({
+            preview: proxyCanvas.toDataURL('image/jpeg', 0.92),
+            print: idCard.toDataURL('image/png')
+        });
 
         isInBatch = true;
         updateBatchUI();
@@ -850,7 +893,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnNextEntry.onclick = nextEntry;
     btnClearBatch.onclick = async () => {
         if (await showConfirm("Are you sure you want to clear all items in the batch?")) {
-            batchQueue = []; batchPrintQueue = []; updateBatchUI();
+            batchQueue = []; updateBatchUI();
         }
     };
     btnPrintBatch.onclick = () => printBatch();
@@ -874,7 +917,6 @@ document.addEventListener('DOMContentLoaded', () => {
             // Clear batch after a short delay so the print dialog opens first
             setTimeout(() => {
                 batchQueue = [];
-                batchPrintQueue = [];
                 updateBatchUI();
 
                 // Restore current card's buttons so it doesn't get lost
@@ -906,9 +948,10 @@ async function checkDuplicate(aadhar, contact) {
     try {
         const resp = await fetch(`${API_BASE}/api/check-duplicate`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ aadhar, contact })
         });
+        if (!resp.ok) return null;
         const result = await resp.json();
         return result.duplicate ? result : null;
     } catch (e) {
@@ -930,10 +973,10 @@ function showDuplicateConfirm(dupData) {
         msg.innerHTML = `This <strong>${field}</strong> already exists in the system for another employee.`;
 
         details.innerHTML = `
-            <div style="margin-bottom: 0.5rem;"><strong>Name:</strong> ${dupData.existing.fullName}</div>
-            <div style="margin-bottom: 0.5rem;"><strong>Site:</strong> ${dupData.existing.site}</div>
-            <div style="margin-bottom: 0.5rem;"><strong>Operator:</strong> ${dupData.existing.operator}</div>
-            <div><strong>Date:</strong> ${formatDate(dupData.existing.createdAt)}</div>
+            <div style="margin-bottom: 0.5rem;"><strong>Name:</strong> ${esc(dupData.existing.fullName)}</div>
+            <div style="margin-bottom: 0.5rem;"><strong>Site:</strong> ${esc(dupData.existing.site)}</div>
+            <div style="margin-bottom: 0.5rem;"><strong>Operator:</strong> ${esc(dupData.existing.operator)}</div>
+            <div><strong>Date:</strong> ${esc(formatDate(dupData.existing.createdAt))}</div>
         `;
 
         modal.style.display = 'flex';
@@ -948,18 +991,34 @@ function showDuplicateConfirm(dupData) {
         };
     });
 }
+let _confirmReject = null;
 function showConfirm(msg) {
+    // Reject any prior pending confirm to prevent race conditions
+    if (_confirmReject) { _confirmReject(false); _confirmReject = null; }
     return new Promise((resolve) => {
+        _confirmReject = () => { document.getElementById('confirmModal').style.display = 'none'; resolve(false); };
         document.getElementById('confirmMessage').textContent = msg;
         const modal = document.getElementById('confirmModal');
         modal.style.display = 'flex';
-        document.getElementById('confirmYes').onclick = () => {
-            modal.style.display = 'none';
-            resolve(true);
-        };
-        document.getElementById('confirmNo').onclick = () => {
-            modal.style.display = 'none';
-            resolve(false);
-        };
+        document.getElementById('confirmYes').onclick = () => { _confirmReject = null; modal.style.display = 'none'; resolve(true); };
+        document.getElementById('confirmNo').onclick = () => { _confirmReject = null; modal.style.display = 'none'; resolve(false); };
     });
 }
+
+// Close modals on Escape key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        const modals = ['confirmModal', 'duplicateModal', 'previewModal', 'recordsModal', 'customAlert'];
+        for (const id of modals) {
+            const el = document.getElementById(id);
+            if (el && el.style.display === 'flex') {
+                if (id === 'confirmModal') { document.getElementById('confirmNo').click(); }
+                else if (id === 'duplicateModal') { document.getElementById('btnCancelDuplicate').click(); }
+                else if (id === 'previewModal') { document.getElementById('closePreview').click(); }
+                else if (id === 'recordsModal') { document.getElementById('closeRecords').click(); }
+                else if (id === 'customAlert') { document.getElementById('closeAlert').click(); }
+                break;
+            }
+        }
+    }
+});

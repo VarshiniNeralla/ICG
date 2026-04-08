@@ -1004,3 +1004,22 @@ input[readonly] {
         align-items: stretch;
     }
 }
+
+/* Print styles for admin records */
+@media print {
+    body * { visibility: hidden; }
+    .table-wrap, .table-wrap * { visibility: visible; }
+    .table-wrap { position: absolute; left: 0; top: 0; width: 100%; }
+    .app-header, .admin-nav, .records-toolbar, .modal-overlay { display: none !important; }
+    @page { size: A4 landscape; margin: 10mm; }
+    body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+}
+
+/* Respect user's motion preferences */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

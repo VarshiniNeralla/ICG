@@ -603,7 +603,7 @@ input[readonly] {
     height: auto;
     border-radius: 12px;
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
-    image-rendering: high-quality;
+    image-rendering: crisp-edges;
 }
 
 .batch-footer {
@@ -747,6 +747,11 @@ input[readonly] {
     @page {
         size: A4;
         margin: 0;
+    }
+
+    body {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
     }
 }
 
@@ -940,4 +945,13 @@ input[readonly] {
     background: #ef4444;
     color: white;
     transform: rotate(90deg);
+}
+
+/* Respect user's motion preferences */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
 }

@@ -14,6 +14,7 @@
 </head>
 
 <body>
+    <noscript><p style="padding:2rem;text-align:center;font-size:1.2rem;">JavaScript is required to use this application. Please enable JavaScript in your browser.</p></noscript>
 
     <!-- LOGIN SCREEN -->
     <div id="loginScreen" class="overlay">
@@ -25,7 +26,7 @@
             </div>
             <form id="loginForm">
                 <div class="field-group">
-                    <label>Username</label>
+                    <label for="username">Username</label>
                     <select id="username" required>
                         <option value="">Select Username</option>
                         <option value="CSO-Akrida">CSO-Akrida</option>
@@ -41,7 +42,7 @@
                     </select>
                 </div>
                 <div class="field-group">
-                    <label>Password</label>
+                    <label for="password">Password</label>
                     <div class="password-wrapper">
                         <input type="password" id="password" placeholder="••••••••" required />
                         <button type="button" id="togglePassword" class="toggle-password" title="Show/Hide Password">
@@ -100,18 +101,18 @@
                                 </div>
                                 <form id="passForm" autocomplete="off">
                                     <div class="field-group">
-                                        <label>Full Name</label>
+                                        <label for="fullName">Full Name</label>
                                         <input type="text" id="fullName" maxlength="40" placeholder="John Doe"
                                             required />
                                     </div>
                                     <div class="form-row two-col">
                                         <div class="field-group">
-                                            <label>Aadhar Number</label>
+                                            <label for="aadhar">Aadhar Number</label>
                                             <input type="text" id="aadhar" maxlength="12" placeholder="123456789012"
                                                 required />
                                         </div>
                                         <div class="field-group">
-                                            <label>Gender</label>
+                                            <label for="gender">Gender</label>
                                             <select id="gender" required>
                                                 <option value="">Select</option>
                                                 <option>Male</option>
@@ -122,16 +123,16 @@
                                     </div>
                                     <div class="form-row two-col">
                                         <div class="field-group">
-                                            <label>Date of Birth</label>
+                                            <label for="dob">Date of Birth</label>
                                             <input type="date" id="dob" required />
                                         </div>
                                         <div class="field-group">
-                                            <label>Age</label>
+                                            <label for="age">Age</label>
                                             <input type="text" id="age" readonly />
                                         </div>
                                     </div>
                                     <div class="field-group">
-                                        <label>Blood Group</label>
+                                        <label for="bloodGroup">Blood Group</label>
                                         <select id="bloodGroup" required>
                                             <option value="">Select</option>
                                             <option>A+</option>
@@ -170,13 +171,13 @@
                                 </div>
                                 <div class="form-row two-col">
                                     <div class="field-group">
-                                        <label>Contractor</label>
+                                        <label for="contractor">Contractor</label>
                                         <select id="contractor" required>
                                             <option value="">Select Contractor</option>
                                         </select>
                                     </div>
                                     <div class="field-group">
-                                        <label>Labor Camp</label>
+                                        <label for="laborCamp">Labor Camp</label>
                                         <select id="laborCamp" required>
                                             <option value="">Select</option>
                                             <option>LC</option>
@@ -186,28 +187,28 @@
                                 </div>
                                 <div class="form-row two-col">
                                     <div class="field-group">
-                                        <label>Designation</label>
+                                        <label for="designation">Designation</label>
                                         <select id="designation" required>
                                             <option value="">Select</option>
                                         </select>
                                     </div>
                                     <div class="field-group">
-                                        <label>Contact Number</label>
+                                        <label for="contact">Contact Number</label>
                                         <input type="tel" id="contact" maxlength="10" placeholder="Number" required />
                                     </div>
                                 </div>
                                 <div class="form-row two-col">
                                     <div class="field-group">
-                                        <label>Date of Induction</label>
+                                        <label for="doi">Date of Induction</label>
                                         <input type="date" id="doi" required />
                                     </div>
                                     <div class="field-group">
-                                        <label>Validity</label>
+                                        <label for="validity">Validity</label>
                                         <input type="date" id="validity" required />
                                     </div>
                                 </div>
                                 <div class="field-group">
-                                    <label>Issue Date</label>
+                                    <label for="issueDate">Issue Date</label>
                                     <input type="text" id="issueDate" readonly />
                                 </div>
                                 <div class="step-actions">
@@ -234,7 +235,7 @@
                                 </div>
                                 <div class="webcam-module">
                                     <div class="webcam-canvas-area">
-                                        <video id="videoFeed" autoplay muted playsinline></video>
+                                        <video id="videoFeed" autoplay muted playsinline aria-label="Live camera feed">Your browser does not support video.</video>
                                         <div class="photo-overlay" id="photoPlaceholder">Camera is turned off!</div>
                                         <canvas id="croppedPhoto" style="display:none;"></canvas>
                                     </div>
@@ -297,7 +298,7 @@
     <div id="batchPrintArea" class="a4-page"></div>
 
     <!-- CUSTOM ALERT MODAL -->
-    <div id="customAlert" class="modal-overlay" style="display:none;">
+    <div id="customAlert" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="alertModalTitle">
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Message</h3>
@@ -315,7 +316,7 @@
 
 
     <!-- SITE RECORDS MODAL -->
-    <div id="recordsModal" class="modal-overlay" style="display:none;">
+    <div id="recordsModal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-label="Site Records">
         <div class="modal-content"
             style="position:relative; width: 90%; max-width: 1200px; max-height: 85vh; overflow-y: auto;">
             <button type="button" id="closeRecords" class="modal-close-btn">&times;</button>
@@ -356,7 +357,7 @@
     </div>
 
     <!-- DUPLICATE CONFIRMATION MODAL -->
-    <div id="duplicateModal" class="modal-overlay" style="display:none;">
+    <div id="duplicateModal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-label="Duplicate Found">
         <div class="modal-content" style="width: 420px;">
             <div class="modal-header">
                 <h3 style="color: #92400e;">⚠️ Duplicate Found!</h3>
@@ -380,7 +381,7 @@
     <div id="toastContainer"></div>
 
     <!-- ENLARGED PREVIEW MODAL -->
-    <div id="previewModal" class="modal-overlay" style="display:none;">
+    <div id="previewModal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-label="Enlarged Preview">
         <div class="modal-content enlarged-preview-content">
             <button type="button" id="closePreview" class="modal-close-btn">&times;</button>
             <img id="enlargedImg" class="enlarged-img" src="" alt="Enlarged Pass" />
@@ -390,7 +391,7 @@
     </div>
 
     <!-- CONFIRM MODAL -->
-    <div id="confirmModal" class="modal-overlay" style="display:none;">
+    <div id="confirmModal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-label="Confirm Action">
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Confirm</h3>

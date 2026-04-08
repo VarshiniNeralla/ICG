@@ -8,7 +8,30 @@
 const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? 'http://localhost:5000'
     : window.location.origin;
-const ADMIN_CREDS = { user: 'admin', pass: 'admin@123' };
+let adminToken = sessionStorage.getItem('ep_admin_token') || null;
+
+// HTML escape helper to prevent XSS
+function esc(str) { const d = document.createElement('div'); d.textContent = str || ''; return d.innerHTML; }
+
+// Auth header helper
+function adminHeaders(extra = {}) {
+    const headers = { ...extra };
+    if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
+    return headers;
+}
+
+// Handle 401 — force re-login when token is invalid or expired
+function handleAuthError(resp) {
+    if (resp.status === 401 || resp.status === 403) {
+        sessionStorage.removeItem('ep_admin');
+        sessionStorage.removeItem('ep_admin_tab');
+        sessionStorage.removeItem('ep_admin_token');
+        adminToken = null;
+        window.location.reload();
+        return true;
+    }
+    return false;
+}
 
 const formatDate = (d) => {
     if (!d) return '---';
@@ -39,32 +62,52 @@ if (toggleAdminPassword) {
 
 
 // ------ LOGIN ------
-loginForm.onsubmit = (e) => {
+loginForm.onsubmit = async (e) => {
     e.preventDefault();
     const u = document.getElementById('adminUser').value.trim();
     const p = document.getElementById('adminPass').value;
-    if (u === ADMIN_CREDS.user && p === ADMIN_CREDS.pass) {
+    try {
+        const resp = await fetch(`${API}/api/auth/admin`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: u, password: p })
+        });
+        const result = await resp.json();
+        if (!resp.ok) {
+            loginError.textContent = result.error || 'Invalid credentials.';
+            return;
+        }
+        adminToken = result.token;
         sessionStorage.setItem('ep_admin', 'true');
+        sessionStorage.setItem('ep_admin_token', adminToken);
         checkState();
-    } else {
-        loginError.textContent = 'Invalid credentials.';
+    } catch {
+        loginError.textContent = 'Login failed. Check connection.';
     }
 };
 
 function checkState() {
-    if (sessionStorage.getItem('ep_admin') === 'true') {
+    if (sessionStorage.getItem('ep_admin') === 'true' && adminToken) {
         loginScreen.style.display = 'none';
         dashboard.style.display = 'block';
         const savedTab = sessionStorage.getItem('ep_admin_tab') || 'dashboard';
         const tabBtn = document.querySelector(`.tab-btn[data-tab="${savedTab}"]`);
         if (tabBtn) tabBtn.click();
         else loadDashboard();
+    } else {
+        // Clear stale session without token
+        sessionStorage.removeItem('ep_admin');
+        sessionStorage.removeItem('ep_admin_tab');
+        loginScreen.style.display = 'flex';
+        dashboard.style.display = 'none';
     }
 }
 
 document.getElementById('btnAdminLogout').onclick = () => {
     sessionStorage.removeItem('ep_admin');
     sessionStorage.removeItem('ep_admin_tab');
+    sessionStorage.removeItem('ep_admin_token');
+    adminToken = null;
     window.location.reload();
 };
 
@@ -72,9 +115,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.onclick = () => {
         const tabName = btn.dataset.tab;
         sessionStorage.setItem('ep_admin_tab', tabName);
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
         document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
         document.getElementById('tab-' + tabName).classList.add('active');
         if (tabName === 'dashboard') loadDashboard();
         if (tabName === 'records') loadRecords();
@@ -100,7 +144,9 @@ function animateCounter(el, target) {
 
 async function loadDashboard() {
     try {
-        const resp = await fetch(`${API}/api/stats`);
+        const resp = await fetch(`${API}/api/stats`, { headers: adminHeaders() });
+        if (handleAuthError(resp)) return;
+        if (!resp.ok) { console.error('Stats fetch failed:', resp.status); return; }
         const data = await resp.json();
         animateCounter(document.getElementById('statTotal'), data.total || 0);
         animateCounter(document.getElementById('statToday'), data.today || 0);
@@ -114,8 +160,8 @@ async function loadDashboard() {
         document.getElementById('labelToday').textContent = `Today (${now.toLocaleDateString('en-US', dateOptions)})`;
         document.getElementById('labelMonth').textContent = `${now.toLocaleDateString('en-US', monthOptions)} Total`;
         const first = now.getDate() - now.getDay();
-        const firstDay = new Date(new Date().setDate(first));
-        const lastDay = new Date(new Date().setDate(first + 6));
+        const firstDay = new Date(now.getFullYear(), now.getMonth(), first);
+        const lastDay = new Date(now.getFullYear(), now.getMonth(), first + 6);
         document.getElementById('labelWeek').textContent = `Week (${firstDay.toLocaleDateString('en-US', { day: 'numeric', month: 'short' })} - ${lastDay.toLocaleDateString('en-US', { day: 'numeric', month: 'short' })})`;
 
         renderBarChart('siteChartArea', data.bySite || {});
@@ -146,9 +192,9 @@ function renderBarChart(containerId, dataObj) {
         <div class="bar-group">
             <span class="bar-value">${value}</span>
             <div class="bar" style="height: ${(value / maxVal) * 140}px; background: linear-gradient(180deg, ${c2}, ${c1});">
-                <div class="bar-tooltip">${label}: ${value} (${pct}%)</div>
+                <div class="bar-tooltip">${esc(label)}: ${value} (${pct}%)</div>
             </div>
-            <span class="bar-label">${label}</span>
+            <span class="bar-label">${esc(label)}</span>
         </div>`;
     }).join('')}</div>`;
 }
@@ -190,23 +236,23 @@ function renderRecordsTable(records) {
         }
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td>${photoSrc ? `<img src="${photoSrc}" class="record-photo" alt="Photo" />` : 'N/A'}</td>
-            <td>${r.fullName || '---'}</td>
-            <td>${r.aadhar || '---'}</td>
-            <td>${r.age || '---'}</td>
-            <td>${r.gender || '---'}</td>
-            <td>${formatDate(r.dob)}</td>
-            <td>${r.bloodGroup || '---'}</td>
-            <td>${r.contractor || '---'}</td>
-            <td>${r.laborCamp || '---'}</td>
-            <td>${r.designation || '---'}</td>
-            <td>${r.contact || '---'}</td>
-            <td>${r.site || 'EMPTY'}</td>
-            <td>${r.operator || 'EMPTY'}</td>
-            <td>${formatDate(r.doi)}</td>
-            <td>${formatDate(r.validity)}</td>
-            <td>${formatDate(r.issueDate)}</td>
-            <td><button class="btn-delete" onclick="deleteRecord('${r._id}')">Delete</button></td>`;
+            <td>${photoSrc ? `<img src="${esc(photoSrc)}" class="record-photo" alt="Photo" />` : 'N/A'}</td>
+            <td>${esc(r.fullName) || '---'}</td>
+            <td>${esc(r.aadhar) || '---'}</td>
+            <td>${esc(r.age) || '---'}</td>
+            <td>${esc(r.gender) || '---'}</td>
+            <td>${esc(formatDate(r.dob))}</td>
+            <td>${esc(r.bloodGroup) || '---'}</td>
+            <td>${esc(r.contractor) || '---'}</td>
+            <td>${esc(r.laborCamp) || '---'}</td>
+            <td>${esc(r.designation) || '---'}</td>
+            <td>${esc(r.contact) || '---'}</td>
+            <td>${esc(r.site) || 'EMPTY'}</td>
+            <td>${esc(r.operator) || 'EMPTY'}</td>
+            <td>${esc(formatDate(r.doi))}</td>
+            <td>${esc(formatDate(r.validity))}</td>
+            <td>${esc(formatDate(r.issueDate))}</td>
+            <td><button class="btn-delete" onclick="deleteRecord('${esc(r._id)}')">Delete</button></td>`;
         tbody.appendChild(tr);
     });
 }
@@ -217,20 +263,26 @@ async function loadRecords(from, to) {
         const params = [];
         if (!from && !to) {
             const retention = localStorage.getItem('ep_retention') || '1m';
-            const now = new Date();
             let cutoff = null;
-            if (retention === '1d') cutoff = new Date(now.setDate(now.getDate() - 1));
-            else if (retention === '1w') cutoff = new Date(now.setDate(now.getDate() - 7));
-            else if (retention === '1m') cutoff = new Date(now.setMonth(now.getMonth() - 1));
-            else if (retention === '1y') cutoff = new Date(now.setFullYear(now.getFullYear() - 1));
-            else if (retention.startsWith('custom_')) cutoff = new Date(new Date().setDate(new Date().getDate() - parseInt(retention.split('_')[1])));
+            // Use fresh Date for each branch to avoid mutation bugs
+            if (retention === '1d') { const d = new Date(); d.setDate(d.getDate() - 1); cutoff = d; }
+            else if (retention === '1w') { const d = new Date(); d.setDate(d.getDate() - 7); cutoff = d; }
+            else if (retention === '1m') { const d = new Date(); d.setMonth(d.getMonth() - 1); cutoff = d; }
+            else if (retention === '1y') { const d = new Date(); d.setFullYear(d.getFullYear() - 1); cutoff = d; }
+            else if (retention.startsWith('custom_')) {
+                const days = parseInt(retention.split('_')[1]);
+                if (days > 0) { const d = new Date(); d.setDate(d.getDate() - days); cutoff = d; }
+            }
             if (cutoff && retention !== 'all') from = cutoff.toISOString().split('T')[0];
         }
         if (from) params.push(`from=${from}`);
         if (to) params.push(`to=${to}`);
         if (params.length) url += '?' + params.join('&');
-        const resp = await fetch(url);
-        currentRecords = await resp.json();
+        const resp = await fetch(url, { headers: adminHeaders() });
+        if (handleAuthError(resp)) return;
+        if (!resp.ok) { console.error('Records fetch failed:', resp.status); return; }
+        const result = await resp.json();
+        currentRecords = result.data || result;
         sortAndRenderRecords();
     } catch (err) { console.error('Records load failed:', err); }
 }
@@ -239,7 +291,7 @@ async function deleteRecord(id) {
     const confirmed = await showConfirm('Delete this record permanently? This action cannot be undone.');
     if (!confirmed) return;
     try {
-        await fetch(`${API}/api/employees/${id}`, { method: 'DELETE' });
+        await fetch(`${API}/api/employees/${id}`, { method: 'DELETE', headers: adminHeaders() });
         showAlert('Record deleted successfully.');
         loadRecords();
     } catch (err) { console.error('Delete failed:', err); }
@@ -269,12 +321,13 @@ document.getElementById('btnExportExcel').onclick = () => {
     link.href = URL.createObjectURL(blob);
     link.download = `EntryPass_Records_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 };
 
 // ------ MANAGE (CRUD) ------
 async function getListAPI(key) {
     try {
-        const res = await fetch(`${API}/api/${key}`);
+        const res = await fetch(`${API}/api/${key}`, { headers: adminHeaders() });
         return res.ok ? await res.json() : [];
     } catch (e) { console.error(e); return []; }
 }
@@ -282,7 +335,7 @@ async function saveListAPI(key, arr) {
     try {
         await fetch(`${API}/api/${key}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: adminHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ data: arr })
         });
     } catch (e) { console.error(e); }
@@ -307,10 +360,10 @@ async function renderManageList(key, listId) {
         const li = document.createElement('li');
         li.id = `item-${key}-${idx}`;
         li.innerHTML = `
-            <span class="item-text">${item}</span>
+            <span class="item-text">${esc(item)}</span>
             <div class="manage-actions">
-                <button class="btn-edit" onclick="startInlineEdit('${key}', ${idx}, '${listId}')">Edit</button>
-                <button class="btn-remove" onclick="confirmRemoveItem('${key}', ${idx}, '${listId}')">Del</button>
+                <button class="btn-edit" onclick="startInlineEdit('${esc(key)}', ${idx}, '${esc(listId)}')">Edit</button>
+                <button class="btn-remove" onclick="confirmRemoveItem('${esc(key)}', ${idx}, '${esc(listId)}')">Del</button>
             </div>`;
         ul.appendChild(li);
     });
@@ -321,7 +374,7 @@ function startInlineEdit(key, idx, listId) {
     const span = li.querySelector('.item-text');
     const originalVal = span.textContent;
     li.innerHTML = `
-        <input type="text" class="inline-edit-input" value="${originalVal}" />
+        <input type="text" class="inline-edit-input" value="${esc(originalVal)}" />
         <div class="manage-actions">
             <button class="btn btn-primary btn-sm btn-save-inline">Save</button>
             <button class="btn btn-secondary btn-sm btn-cancel-inline">Cancel</button>
@@ -340,7 +393,7 @@ async function saveInlineEdit(key, idx, listId, newVal, oldVal) {
     if (!newVal || newVal === oldVal) return renderManageList(key, listId);
     const items = await getListAPI(key);
     items[idx] = newVal; await saveListAPI(key, items);
-    document.getElementById(`item-${key}-${idx}`).innerHTML = `<span class="inline-edit-success">✓ Updated</span><span class="item-text" style="font-weight:700;">${newVal}</span>`;
+    document.getElementById(`item-${key}-${idx}`).innerHTML = `<span class="inline-edit-success">✓ Updated</span><span class="item-text" style="font-weight:700;">${esc(newVal)}</span>`;
     setTimeout(() => renderManageList(key, listId), 2000);
 }
 
@@ -414,13 +467,27 @@ document.getElementById('saveRetention').onclick = () => {
 // ------ MODAL UTILITIES ------
 document.getElementById('closeAlert').onclick = () => document.getElementById('customAlert').style.display = 'none';
 function showAlert(msg) { document.getElementById('alertMessage').textContent = msg; document.getElementById('customAlert').style.display = 'flex'; }
+let _confirmReject = null;
 function showConfirm(msg) {
+    // Reject any prior pending confirm to prevent race conditions
+    if (_confirmReject) { _confirmReject(false); _confirmReject = null; }
     return new Promise((resolve) => {
+        _confirmReject = () => { document.getElementById('confirmModal').style.display = 'none'; resolve(false); };
         document.getElementById('confirmMessage').textContent = msg;
         document.getElementById('confirmModal').style.display = 'flex';
-        document.getElementById('confirmYes').onclick = () => { document.getElementById('confirmModal').style.display = 'none'; resolve(true); };
-        document.getElementById('confirmNo').onclick = () => { document.getElementById('confirmModal').style.display = 'none'; resolve(false); };
+        document.getElementById('confirmYes').onclick = () => { _confirmReject = null; document.getElementById('confirmModal').style.display = 'none'; resolve(true); };
+        document.getElementById('confirmNo').onclick = () => { _confirmReject = null; document.getElementById('confirmModal').style.display = 'none'; resolve(false); };
     });
 }
+
+// Close modals on Escape key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        const alert = document.getElementById('customAlert');
+        const confirm = document.getElementById('confirmModal');
+        if (confirm.style.display === 'flex') { document.getElementById('confirmNo').click(); }
+        else if (alert.style.display === 'flex') { document.getElementById('closeAlert').click(); }
+    }
+});
 
 checkState();
