@@ -44,6 +44,7 @@ if (!hasCloudinaryCreds) {
 }
 
 // ── Security Middleware ──────────────────────────────────────────────────────
+app.set('trust proxy', 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean);
