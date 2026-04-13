@@ -154,6 +154,7 @@ body {
     display: grid;
     grid-template-columns: 1fr 340px;
     gap: 1.5rem;
+    margin-top: 2.7rem;
 }
 
 /* 3. Batch only: Form left, Batch sidebar next to it */
@@ -171,8 +172,8 @@ body {
 
 .app-main.layout-batch .panel-right {
     width: 340px;
-    margin-top: 4rem;
-    /* Align with form card (below the stepper) */
+    margin-top: 5.0rem;
+    /* Batch column — sits below stepper; nudge down from form card top */
 }
 
 .app-main.layout-batch .preview-card {
@@ -203,37 +204,37 @@ body {
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
 }
 
-/* Employment step only — compact card (extra rows when “Others” is selected) */
+/* Employment step only — slightly tighter than default card, still readable */
 #step2 > .card-section {
-    padding: 0.95rem 1.15rem 0.95rem;
+    padding: 1.05rem 1.2rem 1.05rem;
 }
 
 #step2 > .card-section > .step-header {
-    margin-bottom: 0.6rem;
-    padding-bottom: 0.45rem;
+    margin-bottom: 0.68rem;
+    padding-bottom: 0.48rem;
 }
 
 #step2 > .card-section .field-group,
 #step2 > .card-section .optional-other-wrap {
-    margin-bottom: 0.55rem;
+    margin-bottom: 0.65rem;
 }
 
 #step2 > .card-section .form-row.two-col {
-    gap: 0.7rem;
+    gap: 0.8rem;
 }
 
 #step2 > .card-section label {
-    margin-bottom: 0.28rem;
+    margin-bottom: 0.32rem;
 }
 
 #step2 > .card-section input,
 #step2 > .card-section select {
-    padding: 0.52rem 0.75rem;
-    font-size: 0.9rem;
+    padding: 0.58rem 0.78rem;
+    font-size: 0.92rem;
 }
 
 #step2 > .card-section .step-actions {
-    margin-top: 0.2rem;
+    margin-top: 0.45rem;
 }
 
 .step-header {
@@ -282,8 +283,14 @@ body {
     display: flex;
     justify-content: center;
     gap: 3.5rem;
-    margin-bottom: 2rem;
+    /* Labels sit below circles (absolute); extra margin clears them above the card */
+    margin-bottom: 2.65rem;
+    padding-bottom: 0.35rem;
     position: relative;
+}
+
+.panel-left > .carousel-container {
+    margin-top: 0.55rem;
 }
 
 .step-item {
