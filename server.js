@@ -522,7 +522,7 @@ const setupMasterDataRoute = (type, defaultData) => {
 };
 
 setupMasterDataRoute('sites', ['Grava', 'Apas', 'Vipina']);
-setupMasterDataRoute('contractors', ['KLC PVT LTD', 'Sri Infra Works', 'Reddy Constructions']);
+setupMasterDataRoute('contractors', ['KLC PVT LTD', 'Sri Infra Works', 'Reddy Constructions', 'Others']);
 setupMasterDataRoute('roles', ['Worker', 'IT Engineer', 'MEP', 'Safety', 'Quality', 'Others']);
 
 // ── Express Error-Catching Middleware (must be LAST) ─────────────────────────

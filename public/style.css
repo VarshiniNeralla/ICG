@@ -203,6 +203,39 @@ body {
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
 }
 
+/* Employment step only — compact card (extra rows when “Others” is selected) */
+#step2 > .card-section {
+    padding: 0.95rem 1.15rem 0.95rem;
+}
+
+#step2 > .card-section > .step-header {
+    margin-bottom: 0.6rem;
+    padding-bottom: 0.45rem;
+}
+
+#step2 > .card-section .field-group,
+#step2 > .card-section .optional-other-wrap {
+    margin-bottom: 0.55rem;
+}
+
+#step2 > .card-section .form-row.two-col {
+    gap: 0.7rem;
+}
+
+#step2 > .card-section label {
+    margin-bottom: 0.28rem;
+}
+
+#step2 > .card-section input,
+#step2 > .card-section select {
+    padding: 0.52rem 0.75rem;
+    font-size: 0.9rem;
+}
+
+#step2 > .card-section .step-actions {
+    margin-top: 0.2rem;
+}
+
 .step-header {
     display: flex;
     align-items: center;
@@ -331,6 +364,17 @@ label {
     color: var(--text-light);
     margin-bottom: 0.4rem;
     text-transform: uppercase;
+}
+
+.optional-other-wrap .optional-tag {
+    font-weight: 600;
+    text-transform: none;
+    color: var(--text-muted, #64748b);
+    font-size: 0.7rem;
+}
+
+.optional-other-wrap {
+    margin-bottom: 1rem;
 }
 
 input,

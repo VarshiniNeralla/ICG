@@ -64,13 +64,18 @@ async function populateDropdowns() {
         if (sites.includes(curSite)) sSel.value = curSite;
     }
     if (cSel) {
-        cSel.innerHTML = '<option value="">Select Contractor</option>' + contractors.map(c => `<option value="${c}">${c}</option>`).join('');
-        if (contractors.includes(curContractor)) cSel.value = curContractor;
+        const contractorList = [...contractors];
+        if (!contractorList.includes('Others')) contractorList.push('Others');
+        cSel.innerHTML = '<option value="">Select Contractor</option>' + contractorList.map(c => `<option value="${c}">${c}</option>`).join('');
+        if (contractorList.includes(curContractor)) cSel.value = curContractor;
     }
     if (dSel) {
-        dSel.innerHTML = '<option value="">Select</option>' + roles.map(r => `<option value="${r}">${r}</option>`).join('');
-        if (roles.includes(curRole)) dSel.value = curRole;
+        const roleList = [...roles];
+        if (!roleList.includes('Others')) roleList.push('Others');
+        dSel.innerHTML = '<option value="">Select</option>' + roleList.map(r => `<option value="${r}">${r}</option>`).join('');
+        if (roleList.includes(curRole)) dSel.value = curRole;
     }
+    updateOthersFieldsVisibility();
 }
 
 setInterval(populateDropdowns, 30000);
@@ -174,19 +179,59 @@ if (btnTogglePassword) {
     };
 }
 
-function initSession() {
+/** Server keeps sessions in RAM — restart drops them while localStorage still has the token → 401 until re-login. */
+function forceOperatorReLogin(msg) {
+    operator = { name: '', site: '' };
+    localStorage.removeItem('ep_operator');
+    loginScreen.style.display = 'flex';
+    mainApp.style.display = 'none';
+    if (msg) showToast(msg, 'warning');
+}
+
+async function initSession() {
+    let restored = false;
     const savedOp = localStorage.getItem('ep_operator');
     if (savedOp) {
         try {
-            operator = JSON.parse(savedOp);
-            operatorInfo.innerHTML = `Site: <strong>${esc(operator.site)}</strong> | Op: <strong>${esc(operator.name)}</strong>`;
-            loginScreen.style.display = 'none';
-            mainApp.style.display = 'block';
-            setDefaultDates();
+            const parsed = JSON.parse(savedOp);
+            if (parsed?.token) {
+                let sessionOk = false;
+                try {
+                    const vr = await fetch(`${API_BASE}/api/auth/verify`, {
+                        method: 'POST',
+                        headers: { Authorization: `Bearer ${parsed.token}` }
+                    });
+                    if (vr.ok) {
+                        const body = await vr.json();
+                        sessionOk = body.valid === true;
+                    } else if (vr.status === 401) {
+                        sessionOk = false;
+                    } else {
+                        /* 5xx etc. — do not wipe token while server is unhealthy */
+                        sessionOk = true;
+                    }
+                } catch {
+                    sessionOk = true;
+                }
+                if (sessionOk) {
+                    operator = parsed;
+                    restored = true;
+                } else {
+                    localStorage.removeItem('ep_operator');
+                }
+            } else {
+                localStorage.removeItem('ep_operator');
+            }
         } catch {
             console.warn('Corrupted operator session data, clearing.');
             localStorage.removeItem('ep_operator');
         }
+    }
+    if (restored) {
+        operatorInfo.innerHTML = `Site: <strong>${esc(operator.site)}</strong> | Op: <strong>${esc(operator.name)}</strong>`;
+        loginScreen.style.display = 'none';
+        mainApp.style.display = 'block';
+        setDefaultDates();
     }
     const savedBatch = localStorage.getItem('ep_batch');
     if (savedBatch) {
@@ -254,6 +299,36 @@ btnLogout.onclick = () => {
     window.location.reload();
 };
 
+function resolveOthersSelect(selectId, otherInputId) {
+    const sel = document.getElementById(selectId)?.value || '';
+    if (sel !== 'Others') return sel;
+    const custom = (document.getElementById(otherInputId)?.value || '').trim();
+    return custom || 'Others';
+}
+
+function updateOthersFieldsVisibility() {
+    const cWrap = document.getElementById('contractorOtherWrap');
+    const dWrap = document.getElementById('designationOtherWrap');
+    const cSel = document.getElementById('contractor');
+    const dSel = document.getElementById('designation');
+    if (cWrap && cSel) {
+        const on = cSel.value === 'Others';
+        cWrap.style.display = on ? 'block' : 'none';
+        if (!on) {
+            const inp = document.getElementById('contractorOther');
+            if (inp) inp.value = '';
+        }
+    }
+    if (dWrap && dSel) {
+        const on = dSel.value === 'Others';
+        dWrap.style.display = on ? 'block' : 'none';
+        if (!on) {
+            const inp = document.getElementById('designationOther');
+            if (inp) inp.value = '';
+        }
+    }
+}
+
 const getFormData = () => ({
     fullName: document.getElementById('fullName').value.trim(),
     aadhar: document.getElementById('aadhar').value.trim(),
@@ -261,10 +336,10 @@ const getFormData = () => ({
     age: document.getElementById('age').value,
     gender: document.getElementById('gender').value,
     bloodGroup: document.getElementById('bloodGroup').value,
-    contractor: document.getElementById('contractor').value,
+    contractor: resolveOthersSelect('contractor', 'contractorOther'),
     laborCamp: document.getElementById('laborCamp').value,
     doi: document.getElementById('doi').value,
-    designation: document.getElementById('designation').value,
+    designation: resolveOthersSelect('designation', 'designationOther'),
     validity: document.getElementById('validity').value,
     issueDate: document.getElementById('issueDate').value,
     contact: document.getElementById('contact').value.trim()
@@ -520,6 +595,10 @@ async function saveToBackend() {
             headers: authHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify(data)
         });
+        if (resp.status === 401) {
+            forceOperatorReLogin('Session expired or the server was restarted. Please sign in again to save.');
+            return;
+        }
         if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
         const result = await resp.json();
 
@@ -675,6 +754,11 @@ function nextEntry() {
     document.getElementById('contractor').value = '';
     document.getElementById('laborCamp').value = '';
     document.getElementById('designation').value = '';
+    const contractorOther = document.getElementById('contractorOther');
+    const designationOther = document.getElementById('designationOther');
+    if (contractorOther) contractorOther.value = '';
+    if (designationOther) designationOther.value = '';
+    updateOthersFieldsVisibility();
     document.getElementById('contact').value = '';
     document.getElementById('doi').value = '';
     document.getElementById('validity').value = '';
@@ -791,7 +875,7 @@ function exportSiteToExcel() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    initSession();
+    initSession().catch((e) => console.error('initSession failed:', e));
 
     const btnViewRecords = document.getElementById('btnViewRecords');
     const btnExportSiteExcel = document.getElementById('btnExportSiteExcel');
@@ -803,6 +887,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const closeAlert = document.getElementById('closeAlert');
     if (closeAlert) closeAlert.onclick = () => document.getElementById('customAlert').style.display = 'none';
+
+    const selContractor = document.getElementById('contractor');
+    const selDesignation = document.getElementById('designation');
+    if (selContractor) selContractor.addEventListener('change', updateOthersFieldsVisibility);
+    if (selDesignation) selDesignation.addEventListener('change', updateOthersFieldsVisibility);
 
     dobInput.onchange = () => {
         const b = new Date(dobInput.value), t = new Date();
