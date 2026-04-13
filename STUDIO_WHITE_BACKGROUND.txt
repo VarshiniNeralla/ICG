@@ -176,11 +176,24 @@ same idea applies without being as heavy as the still image.
 
 On the destination canvas (live preview canvas or cropped capture canvas):
 
-  1) fillRect entire frame with STUDIO_WHITE_BG
-  2) drawImage the foreground cutout canvas on top (with alpha)
+  1) fillStudioBackdropGradient: radial gradient (brighter center / key behind
+     upper frame, slightly darker toward edges) using STUDIO_BACKDROP_* stops.
+  2) drawStudioContactShadow: very subtle dark radial near the bottom for
+     grounding (reduces a “floating cutout” look).
+  3) drawImage the foreground cutout canvas on top (with alpha).
 
-Fully transparent areas show the flat studio fill; opaque and partial pixels
-show the person with natural softness at the boundary.
+Fully transparent areas show the gradient; opaque and partial pixels show the
+person with natural softness at the boundary.
+
+Additional steps on the cutout before compositing (see public/script.js):
+
+  - Second defringe pass at reduced strength for final capture only.
+  - suppressStudioEdgeAlphaNoise: clears near-zero alpha speckle.
+  - applyStudioSubjectToneAlign: extremely light source-atop + soft-light
+    overlays on the subject only, to nudge exposure/WB toward the bright key.
+
+De-spill target RGB is STUDIO_DEFRINGE_RGB (bright neutral), aligned with the
+gradient center so edge cleanup does not leave grey halos.
 
 
 --------------------------------------------------------------------------------
@@ -222,6 +235,67 @@ show the person with natural softness at the boundary.
   public/style.css     — layout for preview canvas over video
   server.js            — CSP must allow script CDN used for TensorFlow (e.g.
                          cdn.jsdelivr.net) if scripts are loaded from there
+
+
+--------------------------------------------------------------------------------
+13. STUDIO COLOUR CONSTANTS (script.js)
+--------------------------------------------------------------------------------
+
+  STUDIO_BACKDROP_CENTER / MID / EDGE — radial gradient stops
+  STUDIO_DEFRINGE_RGB — target for edge colour pull (de-fringe; #eef1f6)
+  STUDIO_DESPILL_MAX_DELTA — max per-channel RGB shift during de-spill
+
+
+--------------------------------------------------------------------------------
+14. EDGE-AWARE COMPOSITING (updated pipeline)
+--------------------------------------------------------------------------------
+
+  1) Soft mask from model → applyStudioMaskNoiseFloor: α < 0.3 → 0 (noise).
+
+  2) smoothStudioMaskAlphaWeighted: light 3×3 neighbourhood blend on α only.
+
+  3) Uniform GPU blur on mask (2× supersample path when resolution allows) to
+     produce a smoothly feathered “blur mask” at full frame size.
+
+  4) Gradient-modulated merge (soft path only, not binary fallback):
+     - Scale sharp mask to full WxH.
+     - computeAlphaGradientMagnitudeFromRgba: |∇α| via central differences.
+     - mergeStudioMaskGradientFeather: per pixel α = wSharp·α_sharp +
+       (1−wSharp)·α_blur where wSharp grows with normalized |∇α| (strong edges
+       like jaw stay sharper; low-gradient hair fringe stays softer).
+     - If α_sharp ≥ 0.85·255, output α is at least α_sharp (protect core).
+     - Only when 0.35 ≤ α/255 ≤ 0.75: deterministic micro-noise on α (±2) to
+       break perfectly smooth matte edges (not on very soft or near-core edges).
+
+  4b) applyStudioMaskEdgeSolidify (post-merge; binary path: blurred mask).
+     Temporal: first frame copy; then hair/prot 0.8·α_cur+0.2·α_prev; else if
+     stable (α>0.6 three frames) 0.8·α_prev+0.2·α_cur; else |Δ|>40 → midpoint
+     blend else 0.7·α_cur+0.3·α_prev. Leak in orig transition only: RGB vs
+     high-α neighbors (>0.75) max channel diff >40 and (no stable mask yet or
+     outside stable-region flood) → α×0.5. Prev-FG flood from α_prev>0.5
+     through current α>0: if reached and orig>0.3·255, α≥0.8·α_prev. Speckle:
+     α<20 and α_prev<2. |Δα|≤6 hair/prot, ≤10 else vs merged. Buffers reset on
+     resize; α_prev and stable counters updated each frame.
+
+  5) destination-in cutout using merged mask.
+
+  6) Frame hygiene: segment source, mask, sharp-merge, blur, and foreground
+     contexts reset (transform / composite / filter / alpha) then clearRect where
+     needed; destination cleared before backdrop + subject.
+
+  7) defringeStudioTransitionRegion: α ≥ core unchanged; α < 0.3 zeroed.
+     De-spill only when α/255 < 0.65; skip if Rec.709 L is within ~14 of target
+     luminance; cosine taper toward 0.65. In 0.3 ≤ α/255 ≤ 0.7, no extra sat/av
+     k boosts (avoids stacked corrections). Target #eef1f6; max ΔRGB 20. Hair
+     (0.3–0.6, L<90): ~50% k, skip if low saturation; RGB kept closer to
+     original than neutral; no α edits; never increase luminance vs input.
+
+  8) suppressStudioEdgeAlphaNoise; removeStudioIsolatedSpeckles (skips
+     0.3 ≤ α/255 ≤ 0.7 so de-spill is not followed by speckle wipe there);
+     applyStudioFaceRegionLighting (same geometry, ~13% gentler).
+
+  9) applyStudioSubjectToneAlign (slightly weaker fills), gradient backdrop,
+     softer elliptical shadow (≤~1% deterministic opacity wobble), draw subject.
 
 
 ================================================================================

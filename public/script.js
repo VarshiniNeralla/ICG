@@ -113,6 +113,23 @@ let _solidMaskBlurredCanvas = null;
 let _solidMaskHiCanvas = null;
 /** Reused uint16 buffer for 3×3 mask-α smoothing (avoids per-frame alloc when size stable) */
 let _studioMaskAlphaScratch = null;
+/** Full-res sharp mask for gradient-modulated merge with blurred mask */
+let _solidMaskFullResCanvas = null;
+/** Reused buffer for |∇α| (edge-aware feathering) */
+let _studioAlphaGradScratch = null;
+/** Post-merge mask boundary solidify (α scratch + BFS) */
+let _maskEdgeOrig = null;
+let _maskEdgeA = null;
+let _maskEdgeHair = null;
+let _maskEdgeExempt = null;
+let _maskEdgeReach = null;
+let _maskEdgeQ = null;
+let _maskEdgeAlphaPrev = null;
+let _maskEdgeStableCnt = null;
+let _maskEdgeStable = null;
+let _maskEdgeLastW = 0;
+let _maskEdgeLastH = 0;
+let _maskEdgeTemporalReady = false;
 /** Single blit to preview canvas reduces visible tearing vs painting bokeh directly on the live canvas. */
 let _portraitBlurStageCanvas = null;
 let portraitPreviewNextAllowed = 0;
@@ -572,53 +589,657 @@ function synchronouslyPaintRawPreviewOnEffectCanvas() {
     return true;
 }
 
-/* Neutral studio backdrop (slightly off pure #fff to avoid harsh clip against skin) */
-const STUDIO_WHITE_BG = '#f4f5f8';
-
 function parseRgbHex(hex) {
     const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(String(hex).trim());
     if (!m) return { r: 244, g: 245, b: 248 };
     return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
 }
 
-const STUDIO_WHITE_RGB = parseRgbHex(STUDIO_WHITE_BG);
+/* Soft radial “key” backdrop (brighter behind subject) + edge vignette — reads like lit seamless paper */
+const STUDIO_BACKDROP_CENTER = '#fcfdff';
+const STUDIO_BACKDROP_MID = '#f4f6fa';
+const STUDIO_BACKDROP_EDGE = '#e1e4ed';
+/** De-spill target: slightly cooler mid-grey (avoids bright rim / “washed” edge toward #fff) */
+const STUDIO_DEFRINGE_RGB = parseRgbHex('#eef1f6');
+const STUDIO_DESPILL_MAX_DELTA = 20;
 
-/**
- * Pull edge RGB toward studio white; extra push when chroma is high (typical background bleed through hair/shoulders).
- * @param {number} strengthMul 1 = full (capture); ~0.55 for lighter preview pass.
- */
-function defringeStudioCutoutRgba(data, br, bg, bb, strengthMul) {
-    const cap = Math.min(0.98, 0.96 * strengthMul + 0.02);
+/** Kill ultra-low α speckle (semi-transparent noise) after de-spill */
+function suppressStudioEdgeAlphaNoise(data) {
     for (let i = 0; i < data.length; i += 4) {
         const a = data[i + 3];
-        if (a === 0 || a === 255) continue;
-        const inv = (255 - a) / 255;
-        let k = Math.min(cap, (inv * inv * 0.9 + inv * 0.2) * strengthMul);
+        if (a > 0 && a < 15) {
+            data[i] = 0;
+            data[i + 1] = 0;
+            data[i + 2] = 0;
+            data[i + 3] = 0;
+        }
+    }
+}
+
+/** Radial studio fill: brighter key behind upper subject, gentle falloff toward slightly cooler edges */
+function fillStudioBackdropGradient(ctx, w, h) {
+    const mx = w * 0.5;
+    const my = h * 0.34;
+    const r = Math.hypot(w, h) * 0.78;
+    const g = ctx.createRadialGradient(mx, my, 0, mx, my, r);
+    g.addColorStop(0, STUDIO_BACKDROP_CENTER);
+    g.addColorStop(0.42, STUDIO_BACKDROP_MID);
+    g.addColorStop(1, STUDIO_BACKDROP_EDGE);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+}
+
+/** Deterministic opacity scale (≤1% total spread) for barely perceptible shadow variation */
+function studioShadowAlphaScale(ix, iy, salt) {
+    const u = ((ix * 1664525 + iy * 1013904223 + salt * 374761393) >>> 0) % 5;
+    return 0.993 + u * 0.00175;
+}
+
+/** Elliptical grounding shadow: offset, horizontal asymmetry, deterministic opacity jitter */
+function drawStudioContactShadow(ctx, w, h) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    const ox = w * 0.028;
+    const oy = h * 0.008 + 8;
+    ctx.translate(ox, oy);
+    const cx = w * 0.48;
+    const cy = h * 0.918;
+    const rx = w * 0.43;
+    const ry = h * 0.052;
+    const ix = Math.floor(cx);
+    const iy = Math.floor(cy);
+    const horizL = 0.94 + ((((w + 17) * (h + 31)) >>> 0) % 13) / 200;
+    const horizR = 1.06 - ((((w * 3 + h * 5) >>> 0) % 11) / 220);
+    const j0 = studioShadowAlphaScale(ix, iy, 1);
+    const j1 = studioShadowAlphaScale(ix + 3, iy + 1, 2);
+    const j2 = studioShadowAlphaScale(ix - 2, iy + 4, 3);
+    const g1 = ctx.createRadialGradient(cx - w * 0.02, cy, 0, cx + w * 0.025, cy + h * 0.015, Math.max(rx, ry) * 1.05);
+    g1.addColorStop(0, `rgba(16, 20, 32, ${(0.062 * j0 * horizL).toFixed(4)})`);
+    g1.addColorStop(0.35, `rgba(16, 20, 32, ${(0.023 * j1 * (0.97 + 0.06 * horizL)).toFixed(4)})`);
+    g1.addColorStop(0.72, `rgba(16, 20, 32, ${(0.01 * j1 * (0.98 + 0.04 * horizR)).toFixed(4)})`);
+    g1.addColorStop(1, 'rgba(16, 20, 32, 0)');
+    ctx.fillStyle = g1;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0.06, 0, Math.PI * 2);
+    ctx.fill();
+    const g2 = ctx.createRadialGradient(cx + w * 0.04, cy + h * 0.01, 0, cx, cy + h * 0.02, ry * 2.2);
+    g2.addColorStop(0, `rgba(12, 16, 28, ${(0.028 * j2 * horizR).toFixed(4)})`);
+    g2.addColorStop(1, 'rgba(12, 16, 28, 0)');
+    ctx.fillStyle = g2;
+    ctx.beginPath();
+    ctx.ellipse(cx + w * 0.018, cy + 4, rx * 0.88, ry * 0.75, -0.04, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
+/** Deterministic ±2 α jitter (single step; no accumulation across frames) */
+function studioTransitionAlphaMicroNoise(x, y) {
+    const u = ((x * 1664525 + y * 1013904223) >>> 0) % 5;
+    return u - 2;
+}
+
+function clampStudioChannelDelta(orig, delta, maxAbs) {
+    let d = delta;
+    if (d > maxAbs) d = maxAbs;
+    if (d < -maxAbs) d = -maxAbs;
+    const v = orig + d;
+    return v < 0 ? 0 : v > 255 ? 255 : v;
+}
+
+/**
+ * Central-upper face lift with elliptical mask + vertical falloff (stronger forehead / upper cheek,
+ * ~50% strength toward lower face). Only where subject α > 0.
+ */
+function applyStudioFaceRegionLighting(data, w, h) {
+    const cx = w * 0.4;
+    const cy = h * 0.44;
+    const rx = w * 0.09;
+    const ry = h * 0.11;
+    const invRx = 1 / Math.max(rx, 1);
+    const invRy = 1 / Math.max(ry, 1);
+    const yMid = cy + ry * 0.15;
+    const ySpan = Math.max(ry * 0.95, 1);
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const i = (y * w + x) * 4;
+            const a = data[i + 3];
+            if (a < 12) continue;
+            const nx = (x - cx) * invRx;
+            const ny = (y - cy) * invRy;
+            const d2 = nx * nx + ny * ny;
+            if (d2 > 1.38) continue;
+            let radial = (1 - d2 / 1.38) * (1 - d2 / 1.38);
+            radial *= Math.min(1, a / 230);
+            if (radial < 0.02) continue;
+            let vert = 1;
+            if (y > yMid) {
+                const t = Math.min(1, (y - yMid) / ySpan);
+                vert = 1 - 0.5 * t * t;
+            }
+            const faceW = radial * vert * 0.87;
+            if (faceW < 0.015) continue;
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const br = 1 + 0.075 * faceW;
+            const cg = 1 + 0.068 * faceW;
+            const cb = 1 + 0.058 * faceW;
+            let nr = r * br + 4.5 * faceW;
+            let ng = g * cg + 2 * faceW;
+            let nb = b * cb - 2.5 * faceW;
+            const cmul = 1 + 0.045 * faceW;
+            nr = (nr - 128) * cmul + 128;
+            ng = (ng - 128) * cmul + 128;
+            nb = (nb - 128) * cmul + 128;
+            const om = 1 - faceW;
+            data[i] = nr * faceW + r * om;
+            data[i + 1] = ng * faceW + g * om;
+            data[i + 2] = nb * faceW + b * om;
+            if (data[i] < 0) data[i] = 0;
+            else if (data[i] > 255) data[i] = 255;
+            if (data[i + 1] < 0) data[i + 1] = 0;
+            else if (data[i + 1] > 255) data[i + 1] = 255;
+            if (data[i + 2] < 0) data[i + 2] = 0;
+            else if (data[i + 2] > 255) data[i + 2] = 255;
+        }
+    }
+}
+
+/** Mild lift + slight warmth on subject (source-atop) — kept subtle (~12% weaker than prior) */
+function applyStudioSubjectToneAlign(fgX, w, h) {
+    fgX.save();
+    fgX.globalCompositeOperation = 'source-atop';
+    fgX.fillStyle = 'rgba(252, 253, 255, 0.048)';
+    fgX.fillRect(0, 0, w, h);
+    fgX.fillStyle = 'rgba(255, 246, 236, 0.031)';
+    fgX.fillRect(0, 0, w, h);
+    fgX.globalCompositeOperation = 'soft-light';
+    fgX.fillStyle = 'rgba(232, 238, 248, 0.044)';
+    fgX.fillRect(0, 0, w, h);
+    fgX.restore();
+    fgX.globalCompositeOperation = 'source-over';
+}
+
+/** α < 0.3 → 0 (noise); core left graded until merge step sharpens high-α interior */
+function applyStudioMaskNoiseFloor(imd) {
+    const d = imd.data;
+    const floor = Math.round(0.3 * 255);
+    for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] < floor) {
+            d[i + 3] = 0;
+        }
+    }
+}
+
+function readAlpha(data, w, x, y) {
+    if (x < 0 || x >= w || y < 0 || y >= h) return 0;
+    return data[(y * w + x) * 4 + 3];
+}
+
+/** |∇α| on sharp full-res mask (central differences) */
+function computeAlphaGradientMagnitudeFromRgba(data, w, h) {
+    const n = w * h;
+    if (!_studioAlphaGradScratch || _studioAlphaGradScratch.length < n) {
+        _studioAlphaGradScratch = new Float32Array(n);
+    }
+    const grad = _studioAlphaGradScratch;
+    grad.fill(0);
+    let maxG = 1e-5;
+    for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+            const p = y * w + x;
+            const ax = (readAlpha(data, w, x + 1, y) - readAlpha(data, w, x - 1, y)) * 0.5;
+            const ay = (readAlpha(data, w, x, y + 1) - readAlpha(data, w, x, y - 1)) * 0.5;
+            const g = Math.hypot(ax, ay);
+            grad[p] = g;
+            if (g > maxG) maxG = g;
+        }
+    }
+    return { grad, maxG };
+}
+
+/**
+ * Blend sharp vs uniformly blurred α: more sharp where |∇α| is high (jaw, frame),
+ * more blurred where gradient is low (wispy hair). Noise floor already applied on sharp.
+ */
+function mergeStudioMaskGradientFeather(sharpData, blurData, w, h, grad, maxG) {
+    const inv = 1 / maxG;
+    const out = new ImageData(w, h);
+    const od = out.data;
+    const core = Math.round(0.85 * 255);
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const p = y * w + x;
+            const i = p * 4;
+            const aS = sharpData[i + 3];
+            const aB = blurData[i + 3];
+            let wSharp;
+            if (x === 0 || y === 0 || x === w - 1 || y === h - 1) {
+                wSharp = 0.55;
+            } else {
+                const gn = grad[p] * inv;
+                wSharp = Math.min(1, Math.pow(gn, 0.72) * 1.22);
+            }
+            let ao = Math.round(aS * wSharp + aB * (1 - wSharp));
+            if (aS >= core) {
+                ao = Math.max(ao, aS);
+            }
+            if (aS < 1) ao = 0;
+            const taOut = ao / 255;
+            if (taOut >= 0.35 && taOut <= 0.75) {
+                ao += studioTransitionAlphaMicroNoise(x, y);
+                if (ao < 0) ao = 0;
+                else if (ao > 255) ao = 255;
+            }
+            od[i] = 255;
+            od[i + 1] = 255;
+            od[i + 2] = 255;
+            od[i + 3] = ao;
+        }
+    }
+    return out;
+}
+
+/** Clears temporal edge buffers so Retake / a new capture is not blended with the previous photo's mask. */
+function resetPortraitMaskTemporalState() {
+    _maskEdgeTemporalReady = false;
+    if (_maskEdgeAlphaPrev && _maskEdgeAlphaPrev.length) _maskEdgeAlphaPrev.fill(0);
+    if (_maskEdgeStableCnt && _maskEdgeStableCnt.length) _maskEdgeStableCnt.fill(0);
+    if (_maskEdgeStable && _maskEdgeStable.length) _maskEdgeStable.fill(0);
+}
+
+/**
+ * Post-merge mask: temporal blend + stable lock + leak + prev-FG floor (feather merge unchanged).
+ * Hair/prot: ≤20% prev only; no stable lock / leak / speckle on them.
+ */
+function applyStudioMaskEdgeSolidify(maskImd, w, h, frameRgb) {
+    const d = maskImd.data;
+    const n = w * h;
+    if (!_maskEdgeOrig || _maskEdgeOrig.length < n) {
+        _maskEdgeOrig = new Uint8Array(n);
+        _maskEdgeA = new Uint8Array(n);
+        _maskEdgeHair = new Uint8Array(n);
+        _maskEdgeExempt = new Uint8Array(n);
+        _maskEdgeReach = new Uint8Array(n);
+        _maskEdgeQ = new Int32Array(n);
+        _maskEdgeAlphaPrev = new Uint8Array(n);
+        _maskEdgeStableCnt = new Uint8Array(n);
+        _maskEdgeStable = new Uint8Array(n);
+    }
+    const orig = _maskEdgeOrig;
+    const a = _maskEdgeA;
+    const hair = _maskEdgeHair;
+    const prot = _maskEdgeExempt;
+    const buf = _maskEdgeReach;
+    const q = _maskEdgeQ;
+    const prev = _maskEdgeAlphaPrev;
+    const stableCnt = _maskEdgeStableCnt;
+    const stable = _maskEdgeStable;
+    const STRONG = Math.round(0.6 * 255);
+    const NEIGH_HI = 191;
+    const A50 = Math.round(0.5 * 255);
+    const A60 = Math.round(0.6 * 255);
+    const TLO = Math.round(0.3 * 255);
+    const THI = Math.round(0.7 * 255);
+    const NOISE = Math.round(0.3 * 255);
+    if (_maskEdgeLastW !== w || _maskEdgeLastH !== h) {
+        prev.fill(0);
+        stableCnt.fill(0);
+        stable.fill(0);
+        _maskEdgeTemporalReady = false;
+        _maskEdgeLastW = w;
+        _maskEdgeLastH = h;
+    }
+    const readOrigA = (px, py) => {
+        if (px < 0 || px >= w || py < 0 || py >= h) return 0;
+        return orig[py * w + px];
+    };
+    const floodFromSeeds = (seedFn, passFn) => {
+        buf.fill(0);
+        let qt = 0;
+        let qh = 0;
+        for (let p = 0; p < n; p++) {
+            if (seedFn(p)) {
+                buf[p] = 1;
+                q[qt++] = p;
+            }
+        }
+        while (qh < qt) {
+            const p = q[qh++];
+            const x = p % w;
+            const y = (p / w) | 0;
+            const tryPush = (np) => {
+                if (!buf[np] && passFn(np)) {
+                    buf[np] = 1;
+                    q[qt++] = np;
+                }
+            };
+            if (x > 0) tryPush(p - 1);
+            if (x + 1 < w) tryPush(p + 1);
+            if (y > 0) tryPush(p - w);
+            if (y + 1 < h) tryPush(p + w);
+        }
+    };
+    hair.fill(0);
+    prot.fill(0);
+    for (let p = 0, i = 0; p < n; p++, i += 4) {
+        const oa = d[i + 3];
+        orig[p] = oa;
+        if (frameRgb) {
+            const L = 0.299 * frameRgb[i] + 0.587 * frameRgb[i + 1] + 0.114 * frameRgb[i + 2];
+            const ta0 = oa / 255;
+            if (L < 90 && ta0 >= 0.3 && ta0 <= 0.6) {
+                hair[p] = 1;
+            }
+        }
+    }
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const p = y * w + x;
+            const i = p * 4;
+            let strongN = 0;
+            let sumA = 0;
+            let sumR = 0;
+            let sumG = 0;
+            let sumB = 0;
+            let cntCol = 0;
+            let sumSq = 0;
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const na = readOrigA(x + dx, y + dy);
+                    sumA += na;
+                    sumSq += na * na;
+                    if (na > STRONG) {
+                        strongN++;
+                        if (frameRgb) {
+                            const j = ((y + dy) * w + (x + dx)) * 4;
+                            sumR += frameRgb[j];
+                            sumG += frameRgb[j + 1];
+                            sumB += frameRgb[j + 2];
+                            cntCol++;
+                        }
+                    }
+                }
+            }
+            const meanA = sumA / 9;
+            const varA = sumSq / 9 - meanA * meanA;
+            if (varA < 220) {
+                prot[p] = 1;
+            }
+            if (strongN >= 3 && frameRgb && cntCol > 0) {
+                const mr = sumR / cntCol;
+                const mg = sumG / cntCol;
+                const mb = sumB / cntCol;
+                const dr = Math.abs(frameRgb[i] - mr);
+                const dg = Math.abs(frameRgb[i + 1] - mg);
+                const db = Math.abs(frameRgb[i + 2] - mb);
+                if (dr < 40 && dg < 40 && db < 40) {
+                    prot[p] = 1;
+                }
+            }
+        }
+    }
+    const skip = p => hair[p] || prot[p];
+    let hasStable = false;
+    for (let p = 0; p < n; p++) {
+        if (stable[p]) {
+            hasStable = true;
+            break;
+        }
+    }
+    if (!_maskEdgeTemporalReady) {
+        for (let p = 0; p < n; p++) {
+            a[p] = orig[p];
+        }
+    } else {
+        for (let p = 0; p < n; p++) {
+            const pr = prev[p];
+            const cur = orig[p];
+            if (skip(p)) {
+                a[p] = Math.round(0.8 * cur + 0.2 * pr);
+            } else if (stable[p]) {
+                a[p] = Math.round(0.8 * pr + 0.2 * cur);
+            } else {
+                const dlt = cur - pr;
+                if (Math.abs(dlt) > 40) {
+                    a[p] = Math.round(pr + dlt * 0.5);
+                } else {
+                    a[p] = Math.round(0.7 * cur + 0.3 * pr);
+                }
+            }
+            if (a[p] < 0) a[p] = 0;
+            else if (a[p] > 255) a[p] = 255;
+        }
+    }
+    floodFromSeeds(
+        p => stable[p] && a[p] > A60,
+        np => a[np] > 30
+    );
+    const stableConn = buf;
+    if (frameRgb) {
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const p = y * w + x;
+                if (skip(p)) continue;
+                const oa = orig[p];
+                if (oa < TLO || oa > THI) continue;
+                const i = p * 4;
+                let sumR = 0;
+                let sumG = 0;
+                let sumB = 0;
+                let cnt = 0;
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        const na = readOrigA(x + dx, y + dy);
+                        if (na <= NEIGH_HI) continue;
+                        const j = ((y + dy) * w + (x + dx)) * 4;
+                        sumR += frameRgb[j];
+                        sumG += frameRgb[j + 1];
+                        sumB += frameRgb[j + 2];
+                        cnt++;
+                    }
+                }
+                if (cnt === 0) continue;
+                const mr = sumR / cnt;
+                const mg = sumG / cnt;
+                const mb = sumB / cnt;
+                const dr = Math.abs(frameRgb[i] - mr);
+                const dg = Math.abs(frameRgb[i + 1] - mg);
+                const db = Math.abs(frameRgb[i + 2] - mb);
+                if ((dr > 40 || dg > 40 || db > 40) && (!hasStable || !stableConn[p])) {
+                    let v = Math.round(a[p] * 0.5);
+                    a[p] = v < 0 ? 0 : v > 255 ? 255 : v;
+                }
+            }
+        }
+    }
+    floodFromSeeds(
+        p => prev[p] > A50,
+        np => a[np] > 0
+    );
+    const prevFg = buf;
+    for (let p = 0; p < n; p++) {
+        if (skip(p)) continue;
+        if (prevFg[p] && orig[p] > NOISE) {
+            const floorV = Math.round(prev[p] * 0.8);
+            if (a[p] < floorV) {
+                a[p] = floorV > 255 ? 255 : floorV;
+            }
+        }
+    }
+    for (let p = 0; p < n; p++) {
+        if (skip(p)) continue;
+        if (a[p] < 20 && prev[p] < 2) {
+            a[p] = 0;
+        }
+    }
+    const CAP = 10;
+    const CAP_SOFT = 6;
+    for (let p = 0; p < n; p++) {
+        let v = a[p];
+        const cap = skip(p) ? CAP_SOFT : CAP;
+        const dlt = v - orig[p];
+        v = orig[p] + (dlt > cap ? cap : dlt < -cap ? -cap : dlt);
+        a[p] = v < 0 ? 0 : v > 255 ? 255 : v;
+    }
+    for (let p = 0, i = 0; p < n; p++, i += 4) {
+        d[i + 3] = a[p];
+    }
+    for (let p = 0; p < n; p++) {
+        prev[p] = a[p];
+    }
+    for (let p = 0; p < n; p++) {
+        if (skip(p)) {
+            stableCnt[p] = 0;
+            stable[p] = 0;
+        } else if (a[p] > A60) {
+            const c = stableCnt[p] + 1;
+            stableCnt[p] = c > 250 ? 250 : c;
+            stable[p] = stableCnt[p] >= 3 ? 1 : 0;
+        } else {
+            stableCnt[p] = 0;
+            stable[p] = 0;
+        }
+    }
+    _maskEdgeTemporalReady = true;
+}
+
+function studioSpillTargetLuminance(br, bg, bb) {
+    return 0.299 * br + 0.587 * bg + 0.114 * bb;
+}
+
+function studioClampRgbNotPastMidpointTowardNeutral(o, neu, v) {
+    const mid = (o + neu) * 0.5;
+    if (neu > o && v > mid) return mid;
+    if (neu < o && v < mid) return mid;
+    return v;
+}
+
+/**
+ * De-spill: only α/255 < 0.65; skip if Rec.709 L already near target; taper toward 0.65.
+ * Transition 0.3–0.7: no stacked sat/av boosts (base k + taper only). Hair 0.3–0.6, L<90: ~50% k,
+ * skip if low sat; result stays on original side of midpoint vs neutral; never brighten (L).
+ */
+function defringeStudioTransitionRegion(data, br, bg, bb, strengthMul) {
+    const CORE = Math.round(0.85 * 255);
+    const NOISE = Math.round(0.3 * 255);
+    const SPILL_HI = 0.65;
+    const LT0 = studioSpillTargetLuminance(br, bg, bb);
+    const lumNearTarget = 14;
+    const strong = strengthMul > 0.9;
+    const cap = Math.min(0.99, (0.97 * strengthMul + 0.02) * (strong ? 1.05 : 1));
+    const edgeBoost = strong ? 1.12 : 1;
+    const maxD = STUDIO_DESPILL_MAX_DELTA;
+    const hairKMul = 0.5;
+    const transBand = ta => ta >= 0.3 && ta <= 0.7;
+    for (let i = 0; i < data.length; i += 4) {
+        const a0 = data[i + 3];
+        if (a0 <= 0) continue;
+        if (a0 >= CORE) continue;
+        if (a0 < NOISE) {
+            data[i] = 0;
+            data[i + 1] = 0;
+            data[i + 2] = 0;
+            data[i + 3] = 0;
+            continue;
+        }
+        const ta = a0 / 255;
+        if (ta >= SPILL_HI) {
+            continue;
+        }
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
+        const L = 0.299 * r + 0.587 * g + 0.114 * b;
+        if (Math.abs(L - LT0) < lumNearTarget) {
+            continue;
+        }
+        const hairLike = ta >= 0.3 && ta <= 0.6 && L < 90;
         const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
         const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
         const sat = mx - mn;
-        if (sat > 18 && a < 242) {
-            k = Math.min(cap + 0.08 * strengthMul, k + (sat / 255) * 0.3 * inv * strengthMul);
+        if (hairLike && sat < 20) {
+            continue;
         }
-        const av = (r + g + b) / 3;
-        if (a < 222 && av > 192) {
-            k = Math.min(cap + 0.1 * strengthMul, k + 0.12 * inv * strengthMul * Math.min(1, (av - 192) / 55));
+        const inv = (255 - a0) / 255;
+        const transBoost = 1 + ((CORE - a0) / (CORE - NOISE)) * 0.42;
+        let k = Math.min(cap, (inv * inv * 0.94 + inv * 0.26) * strengthMul * transBoost * edgeBoost);
+        if (!transBand(ta)) {
+            const av = (r + g + b) / 3;
+            if (sat > 14) {
+                k = Math.min(cap + 0.1 * strengthMul, k + (sat / 255) * 0.38 * inv * strengthMul * edgeBoost);
+            }
+            if (av > 175) {
+                k = Math.min(cap + 0.12 * strengthMul, k + 0.16 * inv * strengthMul * Math.min(1, (av - 175) / 75) * edgeBoost);
+            }
+            if (av < 75) {
+                k = Math.min(cap + 0.1 * strengthMul, k + 0.13 * inv * strengthMul * Math.min(1, (75 - av) / 75) * edgeBoost);
+            }
         }
-        if (a < 218 && av < 58) {
-            k = Math.min(cap + 0.08 * strengthMul, k + 0.09 * inv * strengthMul * Math.min(1, (58 - av) / 58));
+        const tEdge = (ta - 0.3) / (SPILL_HI - 0.3);
+        let spillEdgeFade = 1;
+        if (tEdge > 0) {
+            spillEdgeFade = tEdge >= 1 ? 0 : 0.5 + 0.5 * Math.cos(Math.PI * tEdge);
         }
-        data[i] += (br - r) * k;
-        data[i + 1] += (bg - g) * k;
-        data[i + 2] += (bb - b) * k;
-        if (data[i] < 0) data[i] = 0;
-        else if (data[i] > 255) data[i] = 255;
-        if (data[i + 1] < 0) data[i + 1] = 0;
-        else if (data[i + 1] > 255) data[i + 1] = 255;
-        if (data[i + 2] < 0) data[i + 2] = 0;
-        else if (data[i + 2] > 255) data[i + 2] = 255;
+        k *= spillEdgeFade;
+        if (hairLike) {
+            k *= hairKMul;
+        }
+        const dr = (br - r) * k;
+        const dg = (bg - g) * k;
+        const db = (bb - b) * k;
+        let nr = clampStudioChannelDelta(r, dr, maxD);
+        let ng = clampStudioChannelDelta(g, dg, maxD);
+        let nb = clampStudioChannelDelta(b, db, maxD);
+        if (hairLike) {
+            nr = studioClampRgbNotPastMidpointTowardNeutral(r, br, nr);
+            ng = studioClampRgbNotPastMidpointTowardNeutral(g, bg, ng);
+            nb = studioClampRgbNotPastMidpointTowardNeutral(b, bb, nb);
+        }
+        let L1 = 0.299 * nr + 0.587 * ng + 0.114 * nb;
+        if (L1 > L + 0.35) {
+            nr = r;
+            ng = g;
+            nb = b;
+            L1 = L;
+        }
+        data[i] = nr;
+        data[i + 1] = ng;
+        data[i + 2] = nb;
+    }
+}
+
+/** Remove tiny isolated semi-transparent blobs (post matte) */
+function removeStudioIsolatedSpeckles(data, w, h) {
+    const n = w * h;
+    if (!_studioMaskAlphaScratch || _studioMaskAlphaScratch.length < n) {
+        _studioMaskAlphaScratch = new Uint16Array(n);
+    }
+    const t = _studioMaskAlphaScratch;
+    for (let p = 0, i = 0; p < n; p++, i += 4) {
+        t[p] = data[i + 3];
+    }
+    for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+            const p = y * w + x;
+            const a = t[p];
+            if (a < 12 || a > 95) continue;
+            const ta = a / 255;
+            if (ta >= 0.3 && ta <= 0.7) continue;
+            let s = 0;
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    s += t[p + dy * w + dx];
+                }
+            }
+            if (s < 380) {
+                const i = p * 4;
+                data[i] = 0;
+                data[i + 1] = 0;
+                data[i + 2] = 0;
+                data[i + 3] = 0;
+            }
+        }
     }
 }
 
@@ -713,6 +1334,13 @@ function copyVideoFrameToCanvas(videoEl, targetCanvas, tw, th) {
     if (!ensureCanvasSize(targetCanvas, tw, th)) return false;
     const sctx = targetCanvas.getContext('2d', { alpha: false });
     try {
+        sctx.save();
+        sctx.setTransform(1, 0, 0, 1, 0, 0);
+        sctx.globalAlpha = 1;
+        sctx.globalCompositeOperation = 'source-over';
+        sctx.filter = 'none';
+        sctx.restore();
+        sctx.clearRect(0, 0, tw, th);
         sctx.drawImage(videoEl, 0, 0, tw, th);
     } catch {
         return false;
@@ -736,11 +1364,25 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
     if (!ensureCanvasSize(destCanvas, w, h)) return false;
     const ctx = destCanvas.getContext('2d');
     if (mode === 'none' || !mode) {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.filter = 'none';
+        ctx.clearRect(0, 0, w, h);
+        ctx.restore();
         ctx.drawImage(videoEl, 0, 0, w, h);
         return false;
     }
     if (!_segmentSourceCanvas) _segmentSourceCanvas = document.createElement('canvas');
     if (!copyVideoFrameToCanvas(videoEl, _segmentSourceCanvas, w, h)) {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.filter = 'none';
+        ctx.clearRect(0, 0, w, h);
+        ctx.restore();
         ctx.drawImage(videoEl, 0, 0, w, h);
         return false;
     }
@@ -753,7 +1395,22 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
         if (mode === 'blur') {
             if (!_portraitBlurStageCanvas) _portraitBlurStageCanvas = document.createElement('canvas');
             ensureCanvasSize(_portraitBlurStageCanvas, w, h);
+            const bctx = _portraitBlurStageCanvas.getContext('2d');
+            bctx.save();
+            bctx.setTransform(1, 0, 0, 1, 0, 0);
+            bctx.globalAlpha = 1;
+            bctx.globalCompositeOperation = 'source-over';
+            bctx.filter = 'none';
+            bctx.clearRect(0, 0, w, h);
+            bctx.restore();
             await API.drawBokehEffect(_portraitBlurStageCanvas, frameCanvas, people, 0.42, 8, 11, false);
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.filter = 'none';
+            ctx.clearRect(0, 0, w, h);
+            ctx.restore();
             ctx.drawImage(_portraitBlurStageCanvas, 0, 0, w, h);
             return true;
         }
@@ -761,6 +1418,13 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
             const list = Array.isArray(people) ? people : (people ? [people] : []);
             const seg = list[0];
             if (!seg?.mask) {
+                ctx.save();
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.globalAlpha = 1;
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.filter = 'none';
+                ctx.clearRect(0, 0, w, h);
+                ctx.restore();
                 ctx.drawImage(frameCanvas, 0, 0, w, h);
                 return false;
             }
@@ -775,17 +1439,27 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
             const mctx = mC.getContext('2d');
             let maskW;
             let maskH;
+            let usedSoftMaskStudioPath = false;
             try {
                 const rawIm = await Promise.resolve(seg.mask.toImageData());
                 if (!rawIm?.data?.length || rawIm.width < 2 || rawIm.height < 2) {
                     throw new Error('empty soft mask');
                 }
                 const soft = softMaskImageDataFromModelMask(rawIm, quality);
+                applyStudioMaskNoiseFloor(soft);
                 smoothStudioMaskAlphaWeighted(soft, quality === 'capture' ? 0.2 : 0.16);
                 ensureCanvasSize(mC, soft.width, soft.height);
+                mctx.save();
+                mctx.setTransform(1, 0, 0, 1, 0, 0);
+                mctx.globalAlpha = 1;
+                mctx.globalCompositeOperation = 'source-over';
+                mctx.filter = 'none';
+                mctx.restore();
+                mctx.clearRect(0, 0, mC.width, mC.height);
                 mctx.putImageData(soft, 0, 0);
                 maskW = soft.width;
                 maskH = soft.height;
+                usedSoftMaskStudioPath = true;
             } catch {
                 const bin = await API.toBinaryMask(
                     people,
@@ -795,10 +1469,24 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
                     0.36
                 );
                 if (!bin?.width || !bin.height) {
+                    ctx.save();
+                    ctx.setTransform(1, 0, 0, 1, 0, 0);
+                    ctx.globalAlpha = 1;
+                    ctx.globalCompositeOperation = 'source-over';
+                    ctx.filter = 'none';
+                    ctx.clearRect(0, 0, w, h);
+                    ctx.restore();
                     ctx.drawImage(frameCanvas, 0, 0, w, h);
                     return false;
                 }
                 ensureCanvasSize(mC, bin.width, bin.height);
+                mctx.save();
+                mctx.setTransform(1, 0, 0, 1, 0, 0);
+                mctx.globalAlpha = 1;
+                mctx.globalCompositeOperation = 'source-over';
+                mctx.filter = 'none';
+                mctx.restore();
+                mctx.clearRect(0, 0, mC.width, mC.height);
                 mctx.putImageData(bin, 0, 0);
                 maskW = bin.width;
                 maskH = bin.height;
@@ -818,6 +1506,12 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
                 const hh = Math.min(Math.max(h * 2, h), cap);
                 ensureCanvasSize(mHi, hw, hh);
                 const hiCtx = mHi.getContext('2d');
+                hiCtx.save();
+                hiCtx.setTransform(1, 0, 0, 1, 0, 0);
+                hiCtx.globalAlpha = 1;
+                hiCtx.globalCompositeOperation = 'source-over';
+                hiCtx.filter = 'none';
+                hiCtx.restore();
                 hiCtx.clearRect(0, 0, hw, hh);
                 hiCtx.imageSmoothingEnabled = true;
                 hiCtx.imageSmoothingQuality = 'high';
@@ -825,12 +1519,24 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
                 hiCtx.drawImage(mC, 0, 0, maskW, maskH, 0, 0, hw, hh);
                 hiCtx.filter = 'none';
                 ensureCanvasSize(mBlur, w, h);
+                mbCtx.save();
+                mbCtx.setTransform(1, 0, 0, 1, 0, 0);
+                mbCtx.globalAlpha = 1;
+                mbCtx.globalCompositeOperation = 'source-over';
+                mbCtx.filter = 'none';
+                mbCtx.restore();
                 mbCtx.clearRect(0, 0, w, h);
                 mbCtx.imageSmoothingEnabled = true;
                 mbCtx.imageSmoothingQuality = 'high';
                 mbCtx.drawImage(mHi, 0, 0, hw, hh, 0, 0, w, h);
             } else {
                 ensureCanvasSize(mBlur, w, h);
+                mbCtx.save();
+                mbCtx.setTransform(1, 0, 0, 1, 0, 0);
+                mbCtx.globalAlpha = 1;
+                mbCtx.globalCompositeOperation = 'source-over';
+                mbCtx.filter = 'none';
+                mbCtx.restore();
                 mbCtx.clearRect(0, 0, w, h);
                 mbCtx.imageSmoothingEnabled = true;
                 mbCtx.imageSmoothingQuality = 'high';
@@ -839,8 +1545,62 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
                 mbCtx.filter = 'none';
             }
 
+            let frameRgbForMask = null;
+            try {
+                const fctx = frameCanvas.getContext('2d', { willReadFrequently: true });
+                frameRgbForMask = fctx.getImageData(0, 0, w, h).data;
+            } catch (_) {
+                /* hair guard uses luminance only when frame is readable */
+            }
+
+            if (usedSoftMaskStudioPath) {
+                if (!_solidMaskFullResCanvas) _solidMaskFullResCanvas = document.createElement('canvas');
+                ensureCanvasSize(_solidMaskFullResCanvas, w, h);
+                const frx = _solidMaskFullResCanvas.getContext('2d', { willReadFrequently: true });
+                frx.save();
+                frx.setTransform(1, 0, 0, 1, 0, 0);
+                frx.globalAlpha = 1;
+                frx.globalCompositeOperation = 'source-over';
+                frx.filter = 'none';
+                frx.restore();
+                frx.imageSmoothingEnabled = true;
+                frx.imageSmoothingQuality = 'high';
+                frx.clearRect(0, 0, w, h);
+                frx.drawImage(mC, 0, 0, maskW, maskH, 0, 0, w, h);
+                try {
+                    const sharpId = frx.getImageData(0, 0, w, h);
+                    const blurId = mbCtx.getImageData(0, 0, w, h);
+                    const { grad, maxG } = computeAlphaGradientMagnitudeFromRgba(sharpId.data, w, h);
+                    const merged = mergeStudioMaskGradientFeather(sharpId.data, blurId.data, w, h, grad, maxG);
+                    applyStudioMaskEdgeSolidify(merged, w, h, frameRgbForMask);
+                    mbCtx.putImageData(merged, 0, 0);
+                } catch (_) {
+                    try {
+                        const blurOnly = mbCtx.getImageData(0, 0, w, h);
+                        applyStudioMaskEdgeSolidify(blurOnly, w, h, frameRgbForMask);
+                        mbCtx.putImageData(blurOnly, 0, 0);
+                    } catch (_e) {
+                        /* keep uniform blur mask */
+                    }
+                }
+            } else {
+                try {
+                    const blurOnly = mbCtx.getImageData(0, 0, w, h);
+                    applyStudioMaskEdgeSolidify(blurOnly, w, h, frameRgbForMask);
+                    mbCtx.putImageData(blurOnly, 0, 0);
+                } catch (_) {
+                    /* keep blurred mask */
+                }
+            }
+
             ensureCanvasSize(fgC, w, h);
             const fgX = fgC.getContext('2d', { willReadFrequently: true });
+            fgX.save();
+            fgX.setTransform(1, 0, 0, 1, 0, 0);
+            fgX.globalAlpha = 1;
+            fgX.globalCompositeOperation = 'source-over';
+            fgX.filter = 'none';
+            fgX.restore();
             fgX.imageSmoothingEnabled = true;
             fgX.imageSmoothingQuality = 'high';
             fgX.clearRect(0, 0, w, h);
@@ -850,25 +1610,44 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
             fgX.globalCompositeOperation = 'source-over';
             try {
                 const edgeFix = fgX.getImageData(0, 0, w, h);
-                defringeStudioCutoutRgba(
+                const dmul = quality === 'capture' ? 1 : 0.64;
+                defringeStudioTransitionRegion(
                     edgeFix.data,
-                    STUDIO_WHITE_RGB.r,
-                    STUDIO_WHITE_RGB.g,
-                    STUDIO_WHITE_RGB.b,
-                    quality === 'capture' ? 1 : 0.64
+                    STUDIO_DEFRINGE_RGB.r,
+                    STUDIO_DEFRINGE_RGB.g,
+                    STUDIO_DEFRINGE_RGB.b,
+                    dmul
                 );
+                suppressStudioEdgeAlphaNoise(edgeFix.data);
+                removeStudioIsolatedSpeckles(edgeFix.data, w, h);
+                applyStudioFaceRegionLighting(edgeFix.data, w, h);
                 fgX.putImageData(edgeFix, 0, 0);
             } catch (_) {
                 /* tainted canvas etc. */
             }
-            ctx.fillStyle = STUDIO_WHITE_BG;
-            ctx.fillRect(0, 0, w, h);
+            applyStudioSubjectToneAlign(fgX, w, h);
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.filter = 'none';
+            ctx.clearRect(0, 0, w, h);
+            ctx.restore();
+            fillStudioBackdropGradient(ctx, w, h);
+            drawStudioContactShadow(ctx, w, h);
             ctx.drawImage(fgC, 0, 0);
             return true;
         }
     } catch (err) {
         console.warn('Portrait background:', err);
     }
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.filter = 'none';
+    ctx.clearRect(0, 0, w, h);
+    ctx.restore();
     ctx.drawImage(frameCanvas, 0, 0, w, h);
     return false;
 }
@@ -994,6 +1773,7 @@ async function startCamera() {
 
 async function capturePhoto() {
     cancelPortraitPreviewLoop();
+    resetPortraitMaskTemporalState();
     if (!video.srcObject) return;
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) {
@@ -1526,6 +2306,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     btnRetake.onclick = () => {
         capturedPhotoDataURL = null;
+        capturedCloudDataURL = null;
+        isSaved = false;
+        resetPortraitMaskTemporalState();
         croppedPhoto.style.display = 'none';
         croppedPhoto.classList.remove('photo-fade-in');
         btnGenerate.style.display = 'none';
