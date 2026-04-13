@@ -111,6 +111,8 @@ let _segmentSourceCanvas = null;
 let _solidMaskBlurredCanvas = null;
 /** 2× supersampled mask feather (downscaled) anti-aliases stair-stepped model output */
 let _solidMaskHiCanvas = null;
+/** Reused uint16 buffer for 3×3 mask-α smoothing (avoids per-frame alloc when size stable) */
+let _studioMaskAlphaScratch = null;
 /** Single blit to preview canvas reduces visible tearing vs painting bokeh directly on the live canvas. */
 let _portraitBlurStageCanvas = null;
 let portraitPreviewNextAllowed = 0;
@@ -441,6 +443,9 @@ function goToStep(step) {
         item.classList.toggle('active', idx + 1 === step);
         item.classList.toggle('completed', idx + 1 < step);
     });
+    if (step === 3) {
+        schedulePortraitMlWarmup();
+    }
 }
 
 function getPhotoBgMode() {
@@ -530,27 +535,20 @@ async function disposePortraitSegmenter() {
 }
 
 /**
- * Loads portrait ML + segmenter when the browser is idle (or soon via timeout).
- * Root delay on first filter pick is mostly: network (tf.js + model) + createSegmenter + first GPU compile — warmup overlaps that with camera preview on “Natural”.
+ * Starts loading TF.js + segmenter as soon as possible (no idle delay).
+ * Also triggered from the photo step and camera start so work overlaps permission dialog / “Natural” preview.
  */
 function schedulePortraitMlWarmup() {
     if (portraitMlWarmScheduled) return;
     portraitMlWarmScheduled = true;
-    const kick = () => {
-        void (async () => {
-            try {
-                await ensurePortraitMlLibs();
-                await getPortraitSegmenter();
-            } catch (_) {
-                /* User may be offline; first effect click will retry */
-            }
-        })();
-    };
-    if (typeof requestIdleCallback === 'function') {
-        requestIdleCallback(kick, { timeout: 1800 });
-    } else {
-        setTimeout(kick, 600);
-    }
+    void (async () => {
+        try {
+            await ensurePortraitMlLibs();
+            await getPortraitSegmenter();
+        } catch (_) {
+            /* Offline / blocked; first Blur/Studio use will retry via startPortraitPreviewLoop */
+        }
+    })();
 }
 
 /** Live frame on the effect canvas before ML runs — avoids empty preview while scripts/model load. */
@@ -577,14 +575,100 @@ function synchronouslyPaintRawPreviewOnEffectCanvas() {
 /* Neutral studio backdrop (slightly off pure #fff to avoid harsh clip against skin) */
 const STUDIO_WHITE_BG = '#f4f5f8';
 
+function parseRgbHex(hex) {
+    const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(String(hex).trim());
+    if (!m) return { r: 244, g: 245, b: 248 };
+    return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
+}
+
+const STUDIO_WHITE_RGB = parseRgbHex(STUDIO_WHITE_BG);
+
+/**
+ * Pull edge RGB toward studio white; extra push when chroma is high (typical background bleed through hair/shoulders).
+ * @param {number} strengthMul 1 = full (capture); ~0.55 for lighter preview pass.
+ */
+function defringeStudioCutoutRgba(data, br, bg, bb, strengthMul) {
+    const cap = Math.min(0.98, 0.96 * strengthMul + 0.02);
+    for (let i = 0; i < data.length; i += 4) {
+        const a = data[i + 3];
+        if (a === 0 || a === 255) continue;
+        const inv = (255 - a) / 255;
+        let k = Math.min(cap, (inv * inv * 0.9 + inv * 0.2) * strengthMul);
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+        const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+        const sat = mx - mn;
+        if (sat > 18 && a < 242) {
+            k = Math.min(cap + 0.08 * strengthMul, k + (sat / 255) * 0.3 * inv * strengthMul);
+        }
+        const av = (r + g + b) / 3;
+        if (a < 222 && av > 192) {
+            k = Math.min(cap + 0.1 * strengthMul, k + 0.12 * inv * strengthMul * Math.min(1, (av - 192) / 55));
+        }
+        if (a < 218 && av < 58) {
+            k = Math.min(cap + 0.08 * strengthMul, k + 0.09 * inv * strengthMul * Math.min(1, (58 - av) / 58));
+        }
+        data[i] += (br - r) * k;
+        data[i + 1] += (bg - g) * k;
+        data[i + 2] += (bb - b) * k;
+        if (data[i] < 0) data[i] = 0;
+        else if (data[i] > 255) data[i] = 255;
+        if (data[i + 1] < 0) data[i + 1] = 0;
+        else if (data[i + 1] > 255) data[i + 1] = 255;
+        if (data[i + 2] < 0) data[i + 2] = 0;
+        else if (data[i + 2] > 255) data[i + 2] = 255;
+    }
+}
+
+/**
+ * Blend each α with its 3×3 neighbourhood (small mix) — knocks down blocky mask noise without the “mush” of a full box blur (preserves fine hair better).
+ */
+function smoothStudioMaskAlphaWeighted(imd, mix) {
+    const w = imd.width;
+    const h = imd.height;
+    const n = w * h;
+    if (!_studioMaskAlphaScratch || _studioMaskAlphaScratch.length < n) {
+        _studioMaskAlphaScratch = new Uint16Array(n);
+    }
+    const tmp = _studioMaskAlphaScratch;
+    const d = imd.data;
+    for (let p = 0, i = 0; p < n; p++, i += 4) {
+        tmp[p] = d[i + 3];
+    }
+    const om = 1 - mix;
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            let sum = 0;
+            let cnt = 0;
+            const p = y * w + x;
+            const c = tmp[p];
+            for (let dy = -1; dy <= 1; dy++) {
+                const yy = y + dy;
+                if (yy < 0 || yy >= h) continue;
+                for (let dx = -1; dx <= 1; dx++) {
+                    const xx = x + dx;
+                    if (xx < 0 || xx >= w) continue;
+                    sum += tmp[yy * w + xx];
+                    cnt++;
+                }
+            }
+            const mean = sum / cnt;
+            const i = p * 4;
+            d[i + 3] = Math.round(om * c + mix * mean);
+        }
+    }
+}
+
 /**
  * Model mask semantics (body-segmentation): R = part id, G/B = 0, A = foreground probability 0–255.
- * Smoothstep in the uncertain band → cleaner edges than pow() boost (which widened halos / “blobs”).
+ * Smoothstep for graded edges; small interior coherence pull reduces patchy “holes” when the model is confident on the person.
  */
 function softMaskImageDataFromModelMask(rawIm, quality) {
     const isCapture = quality === 'capture';
-    const lo = isCapture ? 16 : 18;
-    const hi = isCapture ? 252 : 250;
+    const lo = isCapture ? 9 : 10;
+    const hi = 254;
     const mw = rawIm.width;
     const mh = rawIm.height;
     const src = rawIm.data;
@@ -592,13 +676,17 @@ function softMaskImageDataFromModelMask(rawIm, quality) {
     const od = out.data;
     const span = hi - lo;
     for (let i = 0; i < od.length; i += 4) {
-        let a = src[i + 3];
+        const rawA = src[i + 3];
+        let a = rawA;
         if (a < lo) a = 0;
         else if (a > hi) a = 255;
         else {
             const t = (a - lo) / span;
             const s = t * t * (3 - 2 * t);
             a = Math.round(255 * s);
+        }
+        if (rawA > 208 && a > 0 && a < 88) {
+            a = Math.min(255, Math.round((a + rawA * 0.86) * 0.5));
         }
         od[i] = 255;
         od[i + 1] = 255;
@@ -693,6 +781,7 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
                     throw new Error('empty soft mask');
                 }
                 const soft = softMaskImageDataFromModelMask(rawIm, quality);
+                smoothStudioMaskAlphaWeighted(soft, quality === 'capture' ? 0.2 : 0.16);
                 ensureCanvasSize(mC, soft.width, soft.height);
                 mctx.putImageData(soft, 0, 0);
                 maskW = soft.width;
@@ -703,7 +792,7 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
                     { r: 255, g: 255, b: 255, a: 255 },
                     { r: 0, g: 0, b: 0, a: 0 },
                     false,
-                    0.34
+                    0.36
                 );
                 if (!bin?.width || !bin.height) {
                     ctx.drawImage(frameCanvas, 0, 0, w, h);
@@ -718,9 +807,10 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
             const mbCtx = mBlur.getContext('2d');
             const px = w * h;
             const isCap = quality === 'capture';
-            const hiPxCap = isCap ? 2_000_000 : 1_000_000;
+            const hiPxCap = isCap ? 2_000_000 : 1_350_000;
             const useHiFeather = px <= hiPxCap;
-            const hiBlur = isCap ? 4 : 3;
+            /* Weighted α already anti-aliases lightly — keep GPU feather modest for sharp-yet-smooth studio edges */
+            const hiBlur = isCap ? 4 : 2;
             const flatBlur = isCap ? 3 : 2;
             if (useHiFeather) {
                 const cap = 1600;
@@ -750,7 +840,7 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
             }
 
             ensureCanvasSize(fgC, w, h);
-            const fgX = fgC.getContext('2d');
+            const fgX = fgC.getContext('2d', { willReadFrequently: true });
             fgX.imageSmoothingEnabled = true;
             fgX.imageSmoothingQuality = 'high';
             fgX.clearRect(0, 0, w, h);
@@ -758,6 +848,19 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
             fgX.globalCompositeOperation = 'destination-in';
             fgX.drawImage(mBlur, 0, 0, w, h);
             fgX.globalCompositeOperation = 'source-over';
+            try {
+                const edgeFix = fgX.getImageData(0, 0, w, h);
+                defringeStudioCutoutRgba(
+                    edgeFix.data,
+                    STUDIO_WHITE_RGB.r,
+                    STUDIO_WHITE_RGB.g,
+                    STUDIO_WHITE_RGB.b,
+                    quality === 'capture' ? 1 : 0.64
+                );
+                fgX.putImageData(edgeFix, 0, 0);
+            } catch (_) {
+                /* tainted canvas etc. */
+            }
             ctx.fillStyle = STUDIO_WHITE_BG;
             ctx.fillRect(0, 0, w, h);
             ctx.drawImage(fgC, 0, 0);
@@ -867,8 +970,12 @@ async function startPortraitPreviewLoop() {
 async function startCamera() {
     try {
         cancelPortraitPreviewLoop();
+        schedulePortraitMlWarmup();
+        croppedPhoto.style.display = 'none';
+        /* After capture, cropped canvas stayed on top (higher z-index) — hid live video and felt “frozen” on Retake */
         // Stop any existing stream before requesting a new one
         if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        video.srcObject = null;
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 800, height: 1000 } });
         video.srcObject = stream;
         video.style.display = 'block';
@@ -881,7 +988,6 @@ async function startCamera() {
         btnGenerate.style.display = 'none';
         video.addEventListener('playing', () => {
             void startPortraitPreviewLoop();
-            schedulePortraitMlWarmup();
         }, { once: true });
     } catch (err) { cameraError.textContent = 'Camera failed: ' + err.message; }
 }
@@ -918,7 +1024,11 @@ async function capturePhoto() {
         btnCapture.style.display = 'none';
         btnRetake.style.display = 'inline-flex';
         btnGenerate.style.display = 'inline-flex';
-        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        if (stream) {
+            stream.getTracks().forEach(t => t.stop());
+            stream = null;
+        }
+        video.srcObject = null;
         btnStart.style.display = 'none';
     } finally {
         if (mode !== 'none') {
@@ -1416,6 +1526,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     btnRetake.onclick = () => {
         capturedPhotoDataURL = null;
+        croppedPhoto.style.display = 'none';
         croppedPhoto.classList.remove('photo-fade-in');
         btnGenerate.style.display = 'none';
         startCamera();

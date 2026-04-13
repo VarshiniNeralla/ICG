@@ -1,0 +1,229 @@
+================================================================================
+  STUDIO WHITE BACKGROUND — HOW THE FILTER IS APPLIED (ICG ENTRY PASS APP)
+================================================================================
+
+This document describes how the "Studio white" photo background option works
+in this application. All logic lives in the browser, primarily in:
+
+  public/script.js
+
+The HTML radio for this mode uses:  name="photoBgMode"  value="solid"
+The code path uses the identifier:  mode === 'solid'
+
+
+--------------------------------------------------------------------------------
+1. HIGH-LEVEL IDEA
+--------------------------------------------------------------------------------
+
+Studio white is NOT a CSS filter on the video. It is a client-side compositing
+pipeline that:
+
+  (a) Runs a neural-network model to estimate which pixels belong to the
+      person (a "segmentation mask" with soft alpha / probability per pixel).
+
+  (b) Uses that mask to cut the person out of the current video frame.
+
+  (c) Draws a flat studio backdrop colour behind the cutout.
+
+  (d) Post-processes semi-transparent edge pixels to reduce coloured halos
+      (background colour "bleeding" through hair and shoulders).
+
+
+--------------------------------------------------------------------------------
+2. LIBRARIES AND MODEL
+--------------------------------------------------------------------------------
+
+  - TensorFlow.js (tfjs) is loaded from jsDelivr, typically with WebGL backend
+    when available (CPU fallback if not).
+
+  - @tensorflow-models/body-segmentation is loaded the same way.
+
+  - The segmenter is created as MediaPipe Selfie Segmentation, TFJS runtime,
+    "general" model type:
+
+      bodySegmentation.SupportedModels.MediaPipeSelfieSegmentation
+      createSegmenter(..., { runtime: 'tfjs', modelType: 'general' })
+
+  - For each frame, the app copies the current video frame to an offscreen
+    canvas (_segmentSourceCanvas) and calls:
+
+      segmenter.segmentPeople(frameCanvas)
+
+    This avoids unstable masks when segmenting directly from the live <video>
+    element in some browsers.
+
+
+--------------------------------------------------------------------------------
+3. MASK EXTRACTION (SOFT ALPHA, NOT ONLY BLACK/WHITE)
+--------------------------------------------------------------------------------
+
+The model returns a "mask" object. Per TensorFlow body-segmentation docs, the
+mask's ALPHA channel encodes foreground probability from 0 to 255 (RGB layout
+is used for part IDs; for selfie segmentation the important channel for a
+person cutout is alpha).
+
+The app reads that via:
+
+  seg.mask.toImageData()
+
+Then builds a new ImageData used only as a mask plane (RGB set to white; alpha
+carries the matte):
+
+  Function: softMaskImageDataFromModelMask(rawIm, quality)
+
+  - Pixels with very low model alpha are forced to 0 (background).
+  - Pixels with very high model alpha are forced to 255 (fully inside person).
+  - Between low and high thresholds, alpha is remapped with a smoothstep
+    curve so transitions are graded (better for hair than a hard threshold).
+
+  - A small "interior coherence" adjustment can lift alpha when the model is
+    still confident on the person but the remapped value dipped too low
+    (reduces patchy holes), using conservative rules to avoid lifting background.
+
+If toImageData fails, the code falls back to bodySegmentation.toBinaryMask(...)
+(harder edges) and continues with the same compositing steps.
+
+
+--------------------------------------------------------------------------------
+4. LIGHT SPATIAL SMOOTHING ON THE MASK (PRESERVE HAIR DETAIL)
+--------------------------------------------------------------------------------
+
+Blocky mask noise is reduced without fully blurring away fine strands:
+
+  Function: smoothStudioMaskAlphaWeighted(imd, mix)
+
+For each pixel's alpha:
+
+  newAlpha = (1 - mix) * centerAlpha + mix * (mean of 3x3 neighbourhood)
+
+  mix is about 0.16 for live preview and 0.2 for final capture — a partial blend
+  toward the local mean, not a full box blur.
+
+
+--------------------------------------------------------------------------------
+5. GPU FEATHER (ANTI-ALIAS THE MASK BEFORE CUTOUT)
+--------------------------------------------------------------------------------
+
+The mask canvas is drawn into another canvas with CSS filter blur, often at
+2x resolution then scaled back down with high-quality smoothing:
+
+  - Offscreen canvas _solidMaskHiCanvas may be used at up to 2x frame size
+    (capped on the long edge for performance).
+
+  - blur(...) radius depends on preview vs capture and on total pixel count.
+
+This softens the mask edge so the cutout is not stair-stepped when combined
+with the photo.
+
+
+--------------------------------------------------------------------------------
+6. CUTTING OUT THE PERSON (CANVAS COMPOSITING)
+--------------------------------------------------------------------------------
+
+An offscreen foreground canvas (_solidFgCanvas) is used:
+
+  1) Draw the full colour frame (person + original background).
+
+  2) Set globalCompositeOperation = 'destination-in'.
+
+  3) Draw the blurred soft mask on top.
+
+"destination-in" keeps only the parts of the photo that overlap the mask's
+opacity — the result is the person with semi-transparent pixels at the edge
+where the mask is soft.
+
+
+--------------------------------------------------------------------------------
+7. STUDIO BACKDROP COLOUR
+--------------------------------------------------------------------------------
+
+The final output canvas is filled with a fixed neutral "studio" colour (not
+pure #ffffff, to sit a bit softer against skin):
+
+  STUDIO_WHITE_BG = '#f4f5f8'
+
+Parsed to RGB for spill removal:
+
+  STUDIO_WHITE_RGB
+
+
+--------------------------------------------------------------------------------
+8. DEFRINGE / DE-SPILL (REDUCE HALOS AND COLOUR BLEED)
+--------------------------------------------------------------------------------
+
+After the cutout, many edge pixels are semi-transparent but still carry RGB
+from the old background (e.g. blue/grey), which looks like a halo on white.
+
+  Function: defringeStudioCutoutRgba(pixelBuffer, br, bg, bb, strengthMul)
+
+For each pixel with 0 < alpha < 255:
+
+  - Blend RGB toward the studio neutral. Strength scales with (1 - alpha) so
+    the correction is strongest on the softest edge pixels.
+
+  - Extra correction when colour saturation is high (typical background bleed).
+
+  - Extra correction for very bright edge pixels and very dark edge pixels
+    (luminance-aware nudge) to catch sky/white walls and dark room fringes.
+
+strengthMul is 1.0 on final capture and lower (~0.64) on live preview so the
+same idea applies without being as heavy as the still image.
+
+
+--------------------------------------------------------------------------------
+9. FINAL DRAW ORDER (OUTPUT CANVAS)
+--------------------------------------------------------------------------------
+
+On the destination canvas (live preview canvas or cropped capture canvas):
+
+  1) fillRect entire frame with STUDIO_WHITE_BG
+  2) drawImage the foreground cutout canvas on top (with alpha)
+
+Fully transparent areas show the flat studio fill; opaque and partial pixels
+show the person with natural softness at the boundary.
+
+
+--------------------------------------------------------------------------------
+10. WHERE THIS RUNS IN THE APP
+--------------------------------------------------------------------------------
+
+  - Live preview:  runOnePortraitPreviewFrame() calls
+    renderPortraitFrameToCanvas(videoPreviewEffect, video, mode, 'preview')
+    when photoBgMode is blur or solid, driven by requestVideoFrameCallback (or
+    requestAnimationFrame fallback).
+
+  - Saved photo: capturePhoto() calls
+    renderPortraitFrameToCanvas(croppedPhoto, video, mode, 'capture')
+    so the still image can use slightly stronger mask feather / defringe.
+
+
+--------------------------------------------------------------------------------
+11. LIMITATIONS (IMPORTANT)
+--------------------------------------------------------------------------------
+
+  - Quality is bounded by the selfie segmentation model and in-browser
+    performance. It is not the same as professional offline rotoscoping or
+    dedicated matting AI services.
+
+  - Very fine hair, glasses reflections, or backgrounds similar in brightness
+    to skin can still confuse the model.
+
+  - First use may wait for CDN download of tfjs + model weights; the app
+    attempts to warm-load libraries when entering the photo step / starting the
+    camera to reduce perceived delay.
+
+
+--------------------------------------------------------------------------------
+12. RELATED FILES
+--------------------------------------------------------------------------------
+
+  public/script.js     — segmentation, mask, compositing, defringe
+  public/index.html    — radio inputs photoBgMode (none / blur / solid)
+  public/style.css     — layout for preview canvas over video
+  server.js            — CSP must allow script CDN used for TensorFlow (e.g.
+                         cdn.jsdelivr.net) if scripts are loaded from there
+
+
+================================================================================
+  End of document (generated for ICG project documentation)
+================================================================================
