@@ -271,6 +271,20 @@ const getFormData = () => ({
 });
 
 const loadImage = (src) => new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = src; });
+
+/** Draw image centered in box without stretching (same idea as CSS object-fit: contain). */
+function drawImageContain(ctx, img, boxX, boxY, boxW, boxH) {
+    const iw = img.naturalWidth || img.width;
+    const ih = img.naturalHeight || img.height;
+    if (!iw || !ih) return;
+    const scale = Math.min(boxW / iw, boxH / ih);
+    const dw = iw * scale;
+    const dh = ih * scale;
+    const x = boxX + (boxW - dw) / 2;
+    const y = boxY + (boxH - dh) / 2;
+    ctx.drawImage(img, x, y, dw, dh);
+}
+
 const formatDate = (d) => {
     if (!d) return '---';
     if (typeof d === 'string' && /^\d{2}-\d{2}-\d{4}$/.test(d)) return d;
@@ -412,18 +426,17 @@ async function renderCard() {
         ctx.fillText('LC', CR80_W - 65, 90);
     }
 
-    const phY = 160, phW = 435, phH = 575, phX = (CR80_W - phW) / 2;
+    /* Square photo region (1:1) matches .webcam-canvas-area so capture and pass frame the same way */
+    const phY = 160, phW = 435, phH = phW, phX = (CR80_W - phW) / 2;
     if (capturedPhotoDataURL) {
         try {
             const ph = await loadImage(capturedPhotoDataURL);
             ctx.save();
             ctx.beginPath(); ctx.roundRect(phX, phY, phW, phH, 15); ctx.clip();
-            ctx.drawImage(ph, phX, phY, phW, phH);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(phX, phY, phW, phH);
+            drawImageContain(ctx, ph, phX, phY, phW, phH);
             ctx.restore();
-
-            ctx.strokeStyle = '#e2e8f0';
-            ctx.lineWidth = 4;
-            ctx.strokeRect(phX, phY, phW, phH);
         } catch {
             console.warn('Photo load failed, rendering card without photo.');
         }

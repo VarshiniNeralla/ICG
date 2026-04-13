@@ -504,9 +504,13 @@ input[readonly] {
     border: 1px dashed #cbd5e0;
 }
 
+/* Must match CR80_W:CR80_H (11:15) — bitmap is CR80 * PRINT_SCALE; wrong box distorts the whole preview */
 #idCard {
     width: 240px;
-    height: 380px;
+    height: auto;
+    aspect-ratio: 11 / 15;
+    max-width: 100%;
+    object-fit: contain;
     border-radius: 10px;
     background: white;
     filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.15));
@@ -542,7 +546,7 @@ input[readonly] {
     position: relative;
     cursor: pointer;
     transition: transform 0.2s;
-    aspect-ratio: 638/1011;
+    aspect-ratio: 11 / 15;
 }
 
 .batch-item-wrapper:hover {
