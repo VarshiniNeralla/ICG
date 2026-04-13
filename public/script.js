@@ -97,6 +97,27 @@ let capturedPhotoDataURL = null;
 let currentStep = 1;
 let batchQueue = [];       // Each item: { preview: jpegDataURL, print: pngDataURL }
 let stream = null;
+let photoPortraitSegmenter = null;
+let photoPortraitSegmenterPromise = null;
+let portraitMlLibsPromise = null;
+let portraitPreviewActive = false;
+let portraitPreviewVfcHandle = null;
+let portraitPreviewRafId = null;
+let portraitPreviewProcessing = false;
+let _solidMaskCanvas = null;
+let _solidFgCanvas = null;
+/** Snapshot canvas: segmentPeople on live HTMLVideoElement often yields 0×0 masks under requestVideoFrameCallback. */
+let _segmentSourceCanvas = null;
+let _solidMaskBlurredCanvas = null;
+/** 2× supersampled mask feather (downscaled) anti-aliases stair-stepped model output */
+let _solidMaskHiCanvas = null;
+/** Single blit to preview canvas reduces visible tearing vs painting bokeh directly on the live canvas. */
+let _portraitBlurStageCanvas = null;
+let portraitPreviewNextAllowed = 0;
+/** Extra spacing after each ML frame (ms). 0 = as fast as VFC + segmentPeople allow (true “live” feel). */
+const PORTRAIT_PREVIEW_MIN_GAP_MS = 0;
+/** After camera starts, warm TF.js + segmenter in idle time so first Blur/Studio click skips multi‑second load. */
+let portraitMlWarmScheduled = false;
 let isSaved = false;
 let isInBatch = false;
 let isSaving = false;
@@ -116,6 +137,8 @@ const validityInput = document.getElementById('validity');
 const doiInput = document.getElementById('doi');
 
 const video = document.getElementById('videoFeed');
+const videoPreviewEffect = document.getElementById('videoPreviewEffect');
+const webcamCanvasArea = document.querySelector('.webcam-canvas-area');
 const croppedPhoto = document.getElementById('croppedPhoto');
 const snapCanvas = document.getElementById('snapCanvas');
 const photoPlaceholder = document.getElementById('photoPlaceholder');
@@ -294,6 +317,7 @@ function setDefaultDates() {
 }
 
 btnLogout.onclick = () => {
+    void disposePortraitSegmenter();
     localStorage.removeItem('ep_operator');
     localStorage.removeItem('ep_batch');
     window.location.reload();
@@ -419,39 +443,489 @@ function goToStep(step) {
     });
 }
 
+function getPhotoBgMode() {
+    const el = document.querySelector('input[name="photoBgMode"]:checked');
+    return el ? el.value : 'none';
+}
+
+/** UMD global name varies by bundler; normalize access to body-segmentation API. */
+function bodySegApi() {
+    if (typeof bodySegmentation !== 'undefined') return bodySegmentation;
+    if (typeof window !== 'undefined' && window.bodySegmentation) return window.bodySegmentation;
+    return null;
+}
+
+function loadScriptOnce(src) {
+    return new Promise((resolve, reject) => {
+        const scripts = document.getElementsByTagName('script');
+        for (let i = 0; i < scripts.length; i++) {
+            if (scripts[i].src === src) {
+                if (scripts[i].dataset.loaded === '1') return resolve();
+                scripts[i].addEventListener('load', () => resolve(), { once: true });
+                scripts[i].addEventListener('error', () => reject(new Error(src)), { once: true });
+                return;
+            }
+        }
+        const s = document.createElement('script');
+        s.src = src;
+        s.async = true;
+        s.onload = () => { s.dataset.loaded = '1'; resolve(); };
+        s.onerror = () => reject(new Error('Failed to load ' + src));
+        document.head.appendChild(s);
+    });
+}
+
+async function ensurePortraitMlLibs() {
+    if (typeof tf !== 'undefined' && bodySegApi()) {
+        await tf.ready();
+        return;
+    }
+    if (!portraitMlLibsPromise) {
+        portraitMlLibsPromise = (async () => {
+            await loadScriptOnce('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
+            await loadScriptOnce('https://cdn.jsdelivr.net/npm/@tensorflow-models/body-segmentation@1.0.2/dist/body-segmentation.min.js');
+            if (typeof tf === 'undefined' || !bodySegApi()) {
+                throw new Error('Portrait ML libraries missing (blocked network or CSP?)');
+            }
+            try {
+                await tf.setBackend('webgl');
+            } catch {
+                await tf.setBackend('cpu');
+            }
+            await tf.ready();
+        })();
+    }
+    await portraitMlLibsPromise;
+}
+
+async function getPortraitSegmenter() {
+    if (photoPortraitSegmenter) return photoPortraitSegmenter;
+    if (!photoPortraitSegmenterPromise) {
+        photoPortraitSegmenterPromise = (async () => {
+            await ensurePortraitMlLibs();
+            const API = bodySegApi();
+            if (!API) throw new Error('body-segmentation API not found after load');
+            const model = API.SupportedModels.MediaPipeSelfieSegmentation;
+            return API.createSegmenter(model, { runtime: 'tfjs', modelType: 'general' });
+        })();
+    }
+    try {
+        photoPortraitSegmenter = await photoPortraitSegmenterPromise;
+    } catch (e) {
+        photoPortraitSegmenterPromise = null;
+        throw e;
+    }
+    return photoPortraitSegmenter;
+}
+
+async function disposePortraitSegmenter() {
+    cancelPortraitPreviewLoop();
+    portraitMlWarmScheduled = false;
+    photoPortraitSegmenterPromise = null;
+    const seg = photoPortraitSegmenter;
+    photoPortraitSegmenter = null;
+    if (seg && typeof seg.dispose === 'function') {
+        try { await seg.dispose(); } catch (_) { /* ignore */ }
+    }
+}
+
+/**
+ * Loads portrait ML + segmenter when the browser is idle (or soon via timeout).
+ * Root delay on first filter pick is mostly: network (tf.js + model) + createSegmenter + first GPU compile — warmup overlaps that with camera preview on “Natural”.
+ */
+function schedulePortraitMlWarmup() {
+    if (portraitMlWarmScheduled) return;
+    portraitMlWarmScheduled = true;
+    const kick = () => {
+        void (async () => {
+            try {
+                await ensurePortraitMlLibs();
+                await getPortraitSegmenter();
+            } catch (_) {
+                /* User may be offline; first effect click will retry */
+            }
+        })();
+    };
+    if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(kick, { timeout: 1800 });
+    } else {
+        setTimeout(kick, 600);
+    }
+}
+
+/** Live frame on the effect canvas before ML runs — avoids empty preview while scripts/model load. */
+function synchronouslyPaintRawPreviewOnEffectCanvas() {
+    if (!videoPreviewEffect || !video) return false;
+    let w = Math.floor(video.videoWidth);
+    let h = Math.floor(video.videoHeight);
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w < 2 || h < 2) return false;
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return false;
+    w -= w % 2;
+    h -= h % 2;
+    if (!ensureCanvasSize(videoPreviewEffect, w, h)) return false;
+    const pctx = videoPreviewEffect.getContext('2d', { alpha: false });
+    try {
+        pctx.drawImage(video, 0, 0, w, h);
+    } catch (_) {
+        return false;
+    }
+    if (webcamCanvasArea) webcamCanvasArea.classList.add('preview-fx-active');
+    video.style.opacity = '0';
+    return true;
+}
+
+/* Neutral studio backdrop (slightly off pure #fff to avoid harsh clip against skin) */
+const STUDIO_WHITE_BG = '#f4f5f8';
+
+/**
+ * Model mask semantics (body-segmentation): R = part id, G/B = 0, A = foreground probability 0–255.
+ * Smoothstep in the uncertain band → cleaner edges than pow() boost (which widened halos / “blobs”).
+ */
+function softMaskImageDataFromModelMask(rawIm, quality) {
+    const isCapture = quality === 'capture';
+    const lo = isCapture ? 16 : 18;
+    const hi = isCapture ? 252 : 250;
+    const mw = rawIm.width;
+    const mh = rawIm.height;
+    const src = rawIm.data;
+    const out = new ImageData(mw, mh);
+    const od = out.data;
+    const span = hi - lo;
+    for (let i = 0; i < od.length; i += 4) {
+        let a = src[i + 3];
+        if (a < lo) a = 0;
+        else if (a > hi) a = 255;
+        else {
+            const t = (a - lo) / span;
+            const s = t * t * (3 - 2 * t);
+            a = Math.round(255 * s);
+        }
+        od[i] = 255;
+        od[i + 1] = 255;
+        od[i + 2] = 255;
+        od[i + 3] = a;
+    }
+    return out;
+}
+
+/**
+ * Renders one frame from video onto destCanvas.
+ * @returns {Promise<boolean>} true if blur/solid portrait effect was applied; false for natural or fallback.
+ */
+function ensureCanvasSize(canvas, tw, th) {
+    if (!canvas || tw < 2 || th < 2) return false;
+    if (canvas.width !== tw || canvas.height !== th) {
+        canvas.width = tw;
+        canvas.height = th;
+    }
+    return true;
+}
+
+function copyVideoFrameToCanvas(videoEl, targetCanvas, tw, th) {
+    if (!ensureCanvasSize(targetCanvas, tw, th)) return false;
+    const sctx = targetCanvas.getContext('2d', { alpha: false });
+    try {
+        sctx.drawImage(videoEl, 0, 0, tw, th);
+    } catch {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @param {'preview'|'capture'} [quality] — capture uses slightly stronger mask feather for still photos.
+ */
+async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 'preview') {
+    let w = Math.floor(videoEl.videoWidth);
+    let h = Math.floor(videoEl.videoHeight);
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w < 2 || h < 2) return false;
+    /* Many vision models expect even width/height */
+    w -= w % 2;
+    h -= h % 2;
+    if (w < 2 || h < 2) return false;
+
+    /* Resizing clears the bitmap — only when dimensions change stops preview flicker */
+    if (!ensureCanvasSize(destCanvas, w, h)) return false;
+    const ctx = destCanvas.getContext('2d');
+    if (mode === 'none' || !mode) {
+        ctx.drawImage(videoEl, 0, 0, w, h);
+        return false;
+    }
+    if (!_segmentSourceCanvas) _segmentSourceCanvas = document.createElement('canvas');
+    if (!copyVideoFrameToCanvas(videoEl, _segmentSourceCanvas, w, h)) {
+        ctx.drawImage(videoEl, 0, 0, w, h);
+        return false;
+    }
+    const frameCanvas = _segmentSourceCanvas;
+    try {
+        const API = bodySegApi();
+        if (!API) return false;
+        const segmenter = await getPortraitSegmenter();
+        const people = await segmenter.segmentPeople(frameCanvas);
+        if (mode === 'blur') {
+            if (!_portraitBlurStageCanvas) _portraitBlurStageCanvas = document.createElement('canvas');
+            ensureCanvasSize(_portraitBlurStageCanvas, w, h);
+            await API.drawBokehEffect(_portraitBlurStageCanvas, frameCanvas, people, 0.42, 8, 11, false);
+            ctx.drawImage(_portraitBlurStageCanvas, 0, 0, w, h);
+            return true;
+        }
+        if (mode === 'solid') {
+            const list = Array.isArray(people) ? people : (people ? [people] : []);
+            const seg = list[0];
+            if (!seg?.mask) {
+                ctx.drawImage(frameCanvas, 0, 0, w, h);
+                return false;
+            }
+            if (!_solidMaskCanvas) _solidMaskCanvas = document.createElement('canvas');
+            if (!_solidFgCanvas) _solidFgCanvas = document.createElement('canvas');
+            if (!_solidMaskBlurredCanvas) _solidMaskBlurredCanvas = document.createElement('canvas');
+            if (!_solidMaskHiCanvas) _solidMaskHiCanvas = document.createElement('canvas');
+            const mC = _solidMaskCanvas;
+            const mBlur = _solidMaskBlurredCanvas;
+            const fgC = _solidFgCanvas;
+            const mHi = _solidMaskHiCanvas;
+            const mctx = mC.getContext('2d');
+            let maskW;
+            let maskH;
+            try {
+                const rawIm = await Promise.resolve(seg.mask.toImageData());
+                if (!rawIm?.data?.length || rawIm.width < 2 || rawIm.height < 2) {
+                    throw new Error('empty soft mask');
+                }
+                const soft = softMaskImageDataFromModelMask(rawIm, quality);
+                ensureCanvasSize(mC, soft.width, soft.height);
+                mctx.putImageData(soft, 0, 0);
+                maskW = soft.width;
+                maskH = soft.height;
+            } catch {
+                const bin = await API.toBinaryMask(
+                    people,
+                    { r: 255, g: 255, b: 255, a: 255 },
+                    { r: 0, g: 0, b: 0, a: 0 },
+                    false,
+                    0.34
+                );
+                if (!bin?.width || !bin.height) {
+                    ctx.drawImage(frameCanvas, 0, 0, w, h);
+                    return false;
+                }
+                ensureCanvasSize(mC, bin.width, bin.height);
+                mctx.putImageData(bin, 0, 0);
+                maskW = bin.width;
+                maskH = bin.height;
+            }
+
+            const mbCtx = mBlur.getContext('2d');
+            const px = w * h;
+            const isCap = quality === 'capture';
+            const hiPxCap = isCap ? 2_000_000 : 1_000_000;
+            const useHiFeather = px <= hiPxCap;
+            const hiBlur = isCap ? 4 : 3;
+            const flatBlur = isCap ? 3 : 2;
+            if (useHiFeather) {
+                const cap = 1600;
+                const hw = Math.min(Math.max(w * 2, w), cap);
+                const hh = Math.min(Math.max(h * 2, h), cap);
+                ensureCanvasSize(mHi, hw, hh);
+                const hiCtx = mHi.getContext('2d');
+                hiCtx.clearRect(0, 0, hw, hh);
+                hiCtx.imageSmoothingEnabled = true;
+                hiCtx.imageSmoothingQuality = 'high';
+                hiCtx.filter = `blur(${hiBlur}px)`;
+                hiCtx.drawImage(mC, 0, 0, maskW, maskH, 0, 0, hw, hh);
+                hiCtx.filter = 'none';
+                ensureCanvasSize(mBlur, w, h);
+                mbCtx.clearRect(0, 0, w, h);
+                mbCtx.imageSmoothingEnabled = true;
+                mbCtx.imageSmoothingQuality = 'high';
+                mbCtx.drawImage(mHi, 0, 0, hw, hh, 0, 0, w, h);
+            } else {
+                ensureCanvasSize(mBlur, w, h);
+                mbCtx.clearRect(0, 0, w, h);
+                mbCtx.imageSmoothingEnabled = true;
+                mbCtx.imageSmoothingQuality = 'high';
+                mbCtx.filter = `blur(${flatBlur}px)`;
+                mbCtx.drawImage(mC, 0, 0, maskW, maskH, 0, 0, w, h);
+                mbCtx.filter = 'none';
+            }
+
+            ensureCanvasSize(fgC, w, h);
+            const fgX = fgC.getContext('2d');
+            fgX.imageSmoothingEnabled = true;
+            fgX.imageSmoothingQuality = 'high';
+            fgX.clearRect(0, 0, w, h);
+            fgX.drawImage(frameCanvas, 0, 0, w, h);
+            fgX.globalCompositeOperation = 'destination-in';
+            fgX.drawImage(mBlur, 0, 0, w, h);
+            fgX.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = STUDIO_WHITE_BG;
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(fgC, 0, 0);
+            return true;
+        }
+    } catch (err) {
+        console.warn('Portrait background:', err);
+    }
+    ctx.drawImage(frameCanvas, 0, 0, w, h);
+    return false;
+}
+
+function cancelPortraitPreviewLoop() {
+    portraitPreviewActive = false;
+    portraitPreviewProcessing = false;
+    portraitPreviewNextAllowed = 0;
+    if (portraitPreviewVfcHandle != null && typeof video.cancelVideoFrameCallback === 'function') {
+        try { video.cancelVideoFrameCallback(portraitPreviewVfcHandle); } catch (_) { /* ignore */ }
+    }
+    portraitPreviewVfcHandle = null;
+    if (portraitPreviewRafId != null) {
+        cancelAnimationFrame(portraitPreviewRafId);
+        portraitPreviewRafId = null;
+    }
+    if (webcamCanvasArea) webcamCanvasArea.classList.remove('preview-fx-active');
+    video.style.opacity = '';
+}
+
+function schedulePortraitPreviewNext() {
+    if (!portraitPreviewActive || !video.srcObject) return;
+    if (getPhotoBgMode() === 'none') {
+        cancelPortraitPreviewLoop();
+        return;
+    }
+    if (typeof video.requestVideoFrameCallback === 'function') {
+        portraitPreviewVfcHandle = video.requestVideoFrameCallback(() => {
+            portraitPreviewVfcHandle = null;
+            void runOnePortraitPreviewFrame();
+        });
+    } else {
+        portraitPreviewRafId = requestAnimationFrame(() => {
+            portraitPreviewRafId = null;
+            void runOnePortraitPreviewFrame();
+        });
+    }
+}
+
+async function runOnePortraitPreviewFrame() {
+    if (!portraitPreviewActive || !video.srcObject || !videoPreviewEffect) return;
+    if (getPhotoBgMode() === 'none') {
+        cancelPortraitPreviewLoop();
+        return;
+    }
+    if (portraitPreviewProcessing) {
+        return;
+    }
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) {
+        schedulePortraitPreviewNext();
+        return;
+    }
+    const now = performance.now();
+    if (now < portraitPreviewNextAllowed) {
+        const wait = Math.max(8, portraitPreviewNextAllowed - now);
+        setTimeout(() => {
+            if (portraitPreviewActive && video.srcObject) schedulePortraitPreviewNext();
+        }, wait);
+        return;
+    }
+    portraitPreviewProcessing = true;
+    try {
+        await renderPortraitFrameToCanvas(videoPreviewEffect, video, getPhotoBgMode());
+        if (webcamCanvasArea) webcamCanvasArea.classList.add('preview-fx-active');
+    } catch (err) {
+        console.warn('Portrait preview frame:', err);
+        cancelPortraitPreviewLoop();
+        showToast('Background effect failed to load — check network or try Natural.', 'warning');
+    } finally {
+        portraitPreviewProcessing = false;
+        portraitPreviewNextAllowed = performance.now() + PORTRAIT_PREVIEW_MIN_GAP_MS;
+    }
+    if (portraitPreviewActive && video.srcObject && getPhotoBgMode() !== 'none') {
+        schedulePortraitPreviewNext();
+    }
+}
+
+async function startPortraitPreviewLoop() {
+    if (!videoPreviewEffect || !video.srcObject) return;
+    cancelPortraitPreviewLoop();
+    if (getPhotoBgMode() === 'none') return;
+    synchronouslyPaintRawPreviewOnEffectCanvas();
+    try {
+        await ensurePortraitMlLibs();
+    } catch (err) {
+        console.warn(err);
+        showToast('Could not load portrait tools — use Natural or retry.', 'warning');
+        const nat = document.querySelector('input[name="photoBgMode"][value="none"]');
+        if (nat) nat.checked = true;
+        video.style.opacity = '';
+        if (webcamCanvasArea) webcamCanvasArea.classList.remove('preview-fx-active');
+        return;
+    }
+    portraitPreviewActive = true;
+    video.style.opacity = '0';
+    schedulePortraitPreviewNext();
+}
+
 async function startCamera() {
     try {
+        cancelPortraitPreviewLoop();
         // Stop any existing stream before requesting a new one
         if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 800, height: 1000 } });
         video.srcObject = stream;
         video.style.display = 'block';
+        video.style.opacity = '';
+        cameraError.textContent = '';
         photoPlaceholder.style.display = 'none';
         btnStart.style.display = 'none';
         btnCapture.style.display = 'inline-flex';
         btnRetake.style.display = 'none';
         btnGenerate.style.display = 'none';
+        video.addEventListener('playing', () => {
+            void startPortraitPreviewLoop();
+            schedulePortraitMlWarmup();
+        }, { once: true });
     } catch (err) { cameraError.textContent = 'Camera failed: ' + err.message; }
 }
 
-function capturePhoto() {
+async function capturePhoto() {
+    cancelPortraitPreviewLoop();
     if (!video.srcObject) return;
     const vw = video.videoWidth, vh = video.videoHeight;
-    croppedPhoto.width = vw;
-    croppedPhoto.height = vh;
-    croppedPhoto.getContext('2d').drawImage(video, 0, 0, vw, vh);
-    const fullQualityDataURL = croppedPhoto.toDataURL('image/jpeg', 0.95);
-    const cloudDataURL = croppedPhoto.toDataURL('image/jpeg', 0.5);
-    capturedPhotoDataURL = fullQualityDataURL;
-    capturedCloudDataURL = cloudDataURL;
+    if (!vw || !vh) {
+        showAlert('Camera is still starting — wait a moment, then capture again.');
+        return;
+    }
+    const mode = getPhotoBgMode();
+    const prevCap = btnCapture.textContent;
+    if (mode !== 'none') {
+        btnCapture.disabled = true;
+        btnCapture.textContent = 'Processing…';
+    }
+    try {
+        const appliedFx = await renderPortraitFrameToCanvas(croppedPhoto, video, mode, 'capture');
+        if (mode !== 'none' && !appliedFx) {
+            showToast('Portrait background unavailable — saved the original photo.', 'warning');
+        }
+        const fullQualityDataURL = croppedPhoto.toDataURL('image/jpeg', 0.95);
+        const cloudDataURL = croppedPhoto.toDataURL('image/jpeg', 0.5);
+        capturedPhotoDataURL = fullQualityDataURL;
+        capturedCloudDataURL = cloudDataURL;
 
-    video.style.display = 'none';
-    croppedPhoto.style.display = 'block';
-    btnCapture.style.display = 'none';
-    btnRetake.style.display = 'inline-flex';
-    btnGenerate.style.display = 'inline-flex';
-    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    btnStart.style.display = 'none';
+        video.style.display = 'none';
+        croppedPhoto.style.display = 'block';
+        croppedPhoto.classList.remove('photo-fade-in');
+        void croppedPhoto.offsetWidth;
+        croppedPhoto.classList.add('photo-fade-in');
+        btnCapture.style.display = 'none';
+        btnRetake.style.display = 'inline-flex';
+        btnGenerate.style.display = 'inline-flex';
+        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        btnStart.style.display = 'none';
+    } finally {
+        if (mode !== 'none') {
+            btnCapture.disabled = false;
+            btnCapture.textContent = prevCap;
+        }
+    }
 }
 
 function drawWatermark(ctx) {
@@ -766,8 +1240,12 @@ function nextEntry() {
 
     capturedPhotoDataURL = null;
     capturedCloudDataURL = null;
+    void disposePortraitSegmenter();
+    const bgNone = document.querySelector('input[name="photoBgMode"][value="none"]');
+    if (bgNone) bgNone.checked = true;
     video.style.display = 'none';
     croppedPhoto.style.display = 'none';
+    croppedPhoto.classList.remove('photo-fade-in');
     photoPlaceholder.style.display = 'flex';
     if (canvasEmpty) canvasEmpty.style.display = 'flex';
     idCard.style.display = 'none';
@@ -915,9 +1393,30 @@ document.addEventListener('DOMContentLoaded', () => {
     btnBackTo2.onclick = () => goToStep(2);
 
     btnStart.onclick = startCamera;
-    btnCapture.onclick = capturePhoto;
+    btnCapture.onclick = () => { void capturePhoto(); };
+
+    document.querySelectorAll('input[name="photoBgMode"]').forEach((radio) => {
+        radio.addEventListener('change', () => {
+            if (!video.srcObject || video.style.display === 'none') return;
+            const mode = getPhotoBgMode();
+            if (mode === 'none') {
+                cancelPortraitPreviewLoop();
+                return;
+            }
+            /* Blur ↔ studio share the same segmenter; restarting the loop cancelled VFC and re-hid video — felt like a long pause */
+            if (portraitPreviewActive && photoPortraitSegmenter) {
+                portraitPreviewNextAllowed = 0;
+                if (!portraitPreviewProcessing) {
+                    void runOnePortraitPreviewFrame();
+                }
+                return;
+            }
+            void startPortraitPreviewLoop();
+        });
+    });
     btnRetake.onclick = () => {
         capturedPhotoDataURL = null;
+        croppedPhoto.classList.remove('photo-fade-in');
         btnGenerate.style.display = 'none';
         startCamera();
     };

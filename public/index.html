@@ -247,9 +247,20 @@
                                     </button>
                                     <h2 class="section-title">Photo Capture</h2>
                                 </div>
+                                <div class="photo-bg-toolbar" role="radiogroup" aria-label="Photo background">
+                                    <span class="photo-bg-toolbar-title">Background</span>
+                                    <label class="photo-bg-option"><input type="radio" name="photoBgMode" value="none"
+                                            checked /> Natural</label>
+                                    <label class="photo-bg-option"><input type="radio" name="photoBgMode"
+                                            value="blur" /> Blur</label>
+                                    <label class="photo-bg-option"><input type="radio" name="photoBgMode"
+                                            value="solid" /> Studio white</label>
+                                </div>
                                 <div class="webcam-module">
                                     <div class="webcam-canvas-area">
                                         <video id="videoFeed" autoplay muted playsinline aria-label="Live camera feed">Your browser does not support video.</video>
+                                        <canvas id="videoPreviewEffect" class="video-preview-effect" width="4" height="4"
+                                            aria-hidden="true"></canvas>
                                         <div class="photo-overlay" id="photoPlaceholder">Camera is turned off!</div>
                                         <canvas id="croppedPhoto" style="display:none;"></canvas>
                                     </div>

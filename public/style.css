@@ -154,7 +154,7 @@ body {
     display: grid;
     grid-template-columns: 1fr 340px;
     gap: 1.5rem;
-    margin-top: 2.7rem;
+    margin-top: 5rem;
 }
 
 /* 3. Batch only: Form left, Batch sidebar next to it */
@@ -441,6 +441,59 @@ input[readonly] {
 }
 
 
+/* Photo capture — portrait background (ML applied on capture) */
+.photo-bg-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    margin-bottom: 0.65rem;
+    padding: 0.5rem 0.65rem;
+    background: #f1f5f9;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+}
+
+.photo-bg-toolbar-title {
+    font-size: 0.68rem;
+    font-weight: 800;
+    color: var(--text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 0.25rem;
+}
+
+.photo-bg-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--primary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.photo-bg-option input {
+    width: auto;
+    margin: 0;
+    accent-color: var(--primary);
+}
+
+#croppedPhoto.photo-fade-in {
+    animation: photoFadeReveal 0.45s ease forwards;
+}
+
+@keyframes photoFadeReveal {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
 /* PHOTO MODULE */
 .webcam-module {
     background: #f8fafc;
@@ -460,19 +513,42 @@ input[readonly] {
     border: 2px solid var(--border);
 }
 
-#videoFeed {
+.webcam-canvas-area #videoFeed,
+.webcam-canvas-area #videoPreviewEffect,
+.webcam-canvas-area #croppedPhoto {
+    position: absolute;
+    left: 0;
+    top: 0;
     width: 100%;
     height: 100%;
     object-fit: contain;
 }
 
-#croppedPhoto {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
+.webcam-canvas-area #videoFeed {
+    z-index: 1;
+}
+
+.webcam-canvas-area #videoPreviewEffect {
+    z-index: 2;
+    display: none;
+    pointer-events: none;
+    background: #000;
+}
+
+.webcam-canvas-area.preview-fx-active #videoPreviewEffect {
+    display: block;
+}
+
+.webcam-canvas-area.preview-fx-active #videoFeed {
+    opacity: 0;
+}
+
+.webcam-canvas-area #croppedPhoto {
+    z-index: 4;
 }
 
 .photo-overlay {
+    z-index: 5;
     position: absolute;
     inset: 0;
     display: flex;
