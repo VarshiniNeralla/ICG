@@ -285,6 +285,19 @@ function drawImageContain(ctx, img, boxX, boxY, boxW, boxH) {
     ctx.drawImage(img, x, y, dw, dh);
 }
 
+/** Fill box uniformly, center, clip overflow (object-fit: cover) — no stretch; may crop edges. */
+function drawImageCover(ctx, img, boxX, boxY, boxW, boxH) {
+    const iw = img.naturalWidth || img.width;
+    const ih = img.naturalHeight || img.height;
+    if (!iw || !ih) return;
+    const scale = Math.max(boxW / iw, boxH / ih);
+    const dw = iw * scale;
+    const dh = ih * scale;
+    const x = boxX + (boxW - dw) / 2;
+    const y = boxY + (boxH - dh) / 2;
+    ctx.drawImage(img, x, y, dw, dh);
+}
+
 const formatDate = (d) => {
     if (!d) return '---';
     if (typeof d === 'string' && /^\d{2}-\d{2}-\d{4}$/.test(d)) return d;
@@ -426,8 +439,8 @@ async function renderCard() {
         ctx.fillText('LC', CR80_W - 65, 90);
     }
 
-    /* Square photo region (1:1) matches .webcam-canvas-area so capture and pass frame the same way */
-    const phY = 160, phW = 435, phH = phW, phX = (CR80_W - phW) / 2;
+    /* Tall portrait slot; drawImageCover scales uniformly to fill it (no stretch), clips excess like a zoomed crop */
+    const phY = 160, phW = 435, phH = 575, phX = (CR80_W - phW) / 2;
     if (capturedPhotoDataURL) {
         try {
             const ph = await loadImage(capturedPhotoDataURL);
@@ -435,7 +448,7 @@ async function renderCard() {
             ctx.beginPath(); ctx.roundRect(phX, phY, phW, phH, 15); ctx.clip();
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(phX, phY, phW, phH);
-            drawImageContain(ctx, ph, phX, phY, phW, phH);
+            drawImageCover(ctx, ph, phX, phY, phW, phH);
             ctx.restore();
         } catch {
             console.warn('Photo load failed, rendering card without photo.');
