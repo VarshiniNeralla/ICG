@@ -106,35 +106,20 @@ let portraitPreviewRafId = null;
 let portraitPreviewProcessing = false;
 let _solidMaskCanvas = null;
 let _solidFgCanvas = null;
-/** Snapshot canvas: segmentPeople on live HTMLVideoElement often yields 0×0 masks under requestVideoFrameCallback. */
-let _segmentSourceCanvas = null;
+/** Downscaled RGB snapshot for segmentation (never full-res ML). */
+let _portraitSegCanvas = null;
 let _solidMaskBlurredCanvas = null;
-/** 2× supersampled mask feather (downscaled) anti-aliases stair-stepped model output */
-let _solidMaskHiCanvas = null;
-/** Reused uint16 buffer for 3×3 mask-α smoothing (avoids per-frame alloc when size stable) */
-let _studioMaskAlphaScratch = null;
-/** Full-res sharp mask for gradient-modulated merge with blurred mask */
-let _solidMaskFullResCanvas = null;
-/** Reused buffer for |∇α| (edge-aware feathering) */
-let _studioAlphaGradScratch = null;
-/** Post-merge mask boundary solidify (α scratch + BFS) */
-let _maskEdgeOrig = null;
-let _maskEdgeA = null;
-let _maskEdgeHair = null;
-let _maskEdgeExempt = null;
-let _maskEdgeReach = null;
-let _maskEdgeQ = null;
-let _maskEdgeAlphaPrev = null;
-let _maskEdgeStableCnt = null;
-let _maskEdgeStable = null;
-let _maskEdgeLastW = 0;
-let _maskEdgeLastH = 0;
-let _maskEdgeTemporalReady = false;
 /** Single blit to preview canvas reduces visible tearing vs painting bokeh directly on the live canvas. */
 let _portraitBlurStageCanvas = null;
 let portraitPreviewNextAllowed = 0;
-/** Extra spacing after each ML frame (ms). 0 = as fast as VFC + segmentPeople allow (true “live” feel). */
-const PORTRAIT_PREVIEW_MIN_GAP_MS = 0;
+/** Target max dimension (px) for segmentation input; adapted down on slow frames. */
+let portraitSegMaxDim = 480;
+/** Minimum ms between segmentation ticks (~10–15 FPS). */
+let portraitMinFrameGapMs = Math.round(1000 / 12);
+let portraitTfBackendKind = 'webgl';
+let portraitSlowFrameStreak = 0;
+let _softMaskReuse = null;
+let _warmSegCanvas = null;
 /** After camera starts, warm TF.js + segmenter in idle time so first Blur/Studio click skips multi‑second load. */
 let portraitMlWarmScheduled = false;
 let isSaved = false;
@@ -500,6 +485,9 @@ function loadScriptOnce(src) {
 async function ensurePortraitMlLibs() {
     if (typeof tf !== 'undefined' && typeof tf.ready === 'function' && bodySegApi()) {
         await tf.ready();
+        if (typeof tf.getBackend === 'function') {
+            portraitTfBackendKind = tf.getBackend() === 'webgl' ? 'webgl' : 'cpu';
+        }
         return;
     }
     if (!portraitMlLibsPromise) {
@@ -511,10 +499,16 @@ async function ensurePortraitMlLibs() {
             }
             try {
                 await tf.setBackend('webgl');
+                await tf.ready();
             } catch {
+                portraitTfBackendKind = 'cpu';
                 await tf.setBackend('cpu');
+                await tf.ready();
             }
-            await tf.ready();
+            if (typeof tf.getBackend === 'function') {
+                portraitTfBackendKind = tf.getBackend() === 'webgl' ? 'webgl' : 'cpu';
+            }
+            applyPortraitPerfBaseline();
         })();
     }
     try {
@@ -567,6 +561,7 @@ function schedulePortraitMlWarmup() {
         try {
             await ensurePortraitMlLibs();
             await getPortraitSegmenter();
+            await warmPortraitSegmenterOnce();
         } catch (_) {
             /* Offline / blocked; first Blur/Studio use will retry via startPortraitPreviewLoop */
         }
@@ -594,32 +589,57 @@ function synchronouslyPaintRawPreviewOnEffectCanvas() {
     return true;
 }
 
-function parseRgbHex(hex) {
-    const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(String(hex).trim());
-    if (!m) return { r: 244, g: 245, b: 248 };
-    return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
+function applyPortraitPerfBaseline() {
+    portraitSegMaxDim = portraitTfBackendKind === 'webgl' ? 480 : 320;
+    portraitMinFrameGapMs = portraitTfBackendKind === 'webgl' ? Math.round(1000 / 12) : Math.round(1000 / 10);
+    portraitSlowFrameStreak = 0;
+}
+
+function portraitNoteProcessingDuration(ms) {
+    if (ms > 120) {
+        portraitSlowFrameStreak++;
+        if (portraitSlowFrameStreak >= 3) {
+            portraitSlowFrameStreak = 0;
+            portraitSegMaxDim = Math.max(240, portraitSegMaxDim - 80);
+            portraitMinFrameGapMs = Math.min(150, portraitMinFrameGapMs + 12);
+        }
+    } else {
+        portraitSlowFrameStreak = Math.max(0, portraitSlowFrameStreak - 1);
+    }
+}
+
+/** Even dimensions; longest side capped at maxDim (480p-class segmentation). */
+function computePortraitSegDims(fullW, fullH, maxDim) {
+    const scale = Math.min(1, maxDim / Math.max(fullW, fullH));
+    let sw = Math.max(2, Math.floor(fullW * scale));
+    let sh = Math.max(2, Math.floor(fullH * scale));
+    sw -= sw % 2;
+    sh -= sh % 2;
+    return { sw, sh };
+}
+
+async function warmPortraitSegmenterOnce() {
+    try {
+        const seg = await getPortraitSegmenter();
+        if (!_warmSegCanvas) _warmSegCanvas = document.createElement('canvas');
+        _warmSegCanvas.width = 160;
+        _warmSegCanvas.height = 160;
+        const wx = _warmSegCanvas.getContext('2d', { alpha: false });
+        wx.fillStyle = '#505050';
+        wx.fillRect(0, 0, 160, 160);
+        await seg.segmentPeople(_warmSegCanvas);
+    } catch (_) { /* best-effort warm-up */ }
+}
+
+/** Reset adaptive portrait tuning on retake / new capture. */
+function resetPortraitMaskTemporalState() {
+    applyPortraitPerfBaseline();
 }
 
 /* Soft radial “key” backdrop (brighter behind subject) + edge vignette — reads like lit seamless paper */
 const STUDIO_BACKDROP_CENTER = '#fcfdff';
 const STUDIO_BACKDROP_MID = '#f4f6fa';
 const STUDIO_BACKDROP_EDGE = '#e1e4ed';
-/** De-spill target: slightly cooler mid-grey (avoids bright rim / “washed” edge toward #fff) */
-const STUDIO_DEFRINGE_RGB = parseRgbHex('#eef1f6');
-const STUDIO_DESPILL_MAX_DELTA = 20;
-
-/** Kill ultra-low α speckle (semi-transparent noise) after de-spill */
-function suppressStudioEdgeAlphaNoise(data) {
-    for (let i = 0; i < data.length; i += 4) {
-        const a = data[i + 3];
-        if (a > 0 && a < 15) {
-            data[i] = 0;
-            data[i + 1] = 0;
-            data[i + 2] = 0;
-            data[i + 3] = 0;
-        }
-    }
-}
 
 /** Radial studio fill: brighter key behind upper subject, gentle falloff toward slightly cooler edges */
 function fillStudioBackdropGradient(ctx, w, h) {
@@ -677,95 +697,7 @@ function drawStudioContactShadow(ctx, w, h) {
     ctx.restore();
 }
 
-/** Deterministic ±2 α jitter (single step; no accumulation across frames) */
-function studioTransitionAlphaMicroNoise(x, y) {
-    const u = ((x * 1664525 + y * 1013904223) >>> 0) % 5;
-    return u - 2;
-}
-
-function clampStudioChannelDelta(orig, delta, maxAbs) {
-    let d = delta;
-    if (d > maxAbs) d = maxAbs;
-    if (d < -maxAbs) d = -maxAbs;
-    const v = orig + d;
-    return v < 0 ? 0 : v > 255 ? 255 : v;
-}
-
-/**
- * Central-upper face lift with elliptical mask + vertical falloff (stronger forehead / upper cheek,
- * ~50% strength toward lower face). Only where subject α > 0.
- */
-function applyStudioFaceRegionLighting(data, w, h) {
-    const cx = w * 0.4;
-    const cy = h * 0.44;
-    const rx = w * 0.09;
-    const ry = h * 0.11;
-    const invRx = 1 / Math.max(rx, 1);
-    const invRy = 1 / Math.max(ry, 1);
-    const yMid = cy + ry * 0.15;
-    const ySpan = Math.max(ry * 0.95, 1);
-    for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-            const i = (y * w + x) * 4;
-            const a = data[i + 3];
-            if (a < 12) continue;
-            const nx = (x - cx) * invRx;
-            const ny = (y - cy) * invRy;
-            const d2 = nx * nx + ny * ny;
-            if (d2 > 1.38) continue;
-            let radial = (1 - d2 / 1.38) * (1 - d2 / 1.38);
-            radial *= Math.min(1, a / 230);
-            if (radial < 0.02) continue;
-            let vert = 1;
-            if (y > yMid) {
-                const t = Math.min(1, (y - yMid) / ySpan);
-                vert = 1 - 0.5 * t * t;
-            }
-            const faceW = radial * vert * 0.87;
-            if (faceW < 0.015) continue;
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            const br = 1 + 0.075 * faceW;
-            const cg = 1 + 0.068 * faceW;
-            const cb = 1 + 0.058 * faceW;
-            let nr = r * br + 4.5 * faceW;
-            let ng = g * cg + 2 * faceW;
-            let nb = b * cb - 2.5 * faceW;
-            const cmul = 1 + 0.045 * faceW;
-            nr = (nr - 128) * cmul + 128;
-            ng = (ng - 128) * cmul + 128;
-            nb = (nb - 128) * cmul + 128;
-            const om = 1 - faceW;
-            data[i] = nr * faceW + r * om;
-            data[i + 1] = ng * faceW + g * om;
-            data[i + 2] = nb * faceW + b * om;
-            if (data[i] < 0) data[i] = 0;
-            else if (data[i] > 255) data[i] = 255;
-            if (data[i + 1] < 0) data[i + 1] = 0;
-            else if (data[i + 1] > 255) data[i + 1] = 255;
-            if (data[i + 2] < 0) data[i + 2] = 0;
-            else if (data[i + 2] > 255) data[i + 2] = 255;
-        }
-    }
-}
-
-/** Mild lift + slight warmth on subject (source-atop) — kept subtle (~12% weaker than prior) */
-function applyStudioSubjectToneAlign(fgX, w, h) {
-    fgX.save();
-    fgX.globalCompositeOperation = 'source-atop';
-    fgX.fillStyle = 'rgba(252, 253, 255, 0.048)';
-    fgX.fillRect(0, 0, w, h);
-    fgX.fillStyle = 'rgba(255, 246, 236, 0.031)';
-    fgX.fillRect(0, 0, w, h);
-    fgX.globalCompositeOperation = 'soft-light';
-    fgX.fillStyle = 'rgba(232, 238, 248, 0.044)';
-    fgX.fillRect(0, 0, w, h);
-    fgX.restore();
-    fgX.globalCompositeOperation = 'source-over';
-}
-
-/** α < 0.3 → 0 (noise); core left graded until merge step sharpens high-α interior */
+/** Drop very low alpha (sensor / model speckle) before GPU feather. */
 function applyStudioMaskNoiseFloor(imd) {
     const d = imd.data;
     const floor = Math.round(0.3 * 255);
@@ -776,520 +708,9 @@ function applyStudioMaskNoiseFloor(imd) {
     }
 }
 
-function readAlpha(data, w, x, y) {
-    if (x < 0 || x >= w || y < 0 || y >= h) return 0;
-    return data[(y * w + x) * 4 + 3];
-}
-
-/** |∇α| on sharp full-res mask (central differences) */
-function computeAlphaGradientMagnitudeFromRgba(data, w, h) {
-    const n = w * h;
-    if (!_studioAlphaGradScratch || _studioAlphaGradScratch.length < n) {
-        _studioAlphaGradScratch = new Float32Array(n);
-    }
-    const grad = _studioAlphaGradScratch;
-    grad.fill(0);
-    let maxG = 1e-5;
-    for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-            const p = y * w + x;
-            const ax = (readAlpha(data, w, x + 1, y) - readAlpha(data, w, x - 1, y)) * 0.5;
-            const ay = (readAlpha(data, w, x, y + 1) - readAlpha(data, w, x, y - 1)) * 0.5;
-            const g = Math.hypot(ax, ay);
-            grad[p] = g;
-            if (g > maxG) maxG = g;
-        }
-    }
-    return { grad, maxG };
-}
-
-/**
- * Blend sharp vs uniformly blurred α: more sharp where |∇α| is high (jaw, frame),
- * more blurred where gradient is low (wispy hair). Noise floor already applied on sharp.
- */
-function mergeStudioMaskGradientFeather(sharpData, blurData, w, h, grad, maxG) {
-    const inv = 1 / maxG;
-    const out = new ImageData(w, h);
-    const od = out.data;
-    const core = Math.round(0.85 * 255);
-    for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-            const p = y * w + x;
-            const i = p * 4;
-            const aS = sharpData[i + 3];
-            const aB = blurData[i + 3];
-            let wSharp;
-            if (x === 0 || y === 0 || x === w - 1 || y === h - 1) {
-                wSharp = 0.55;
-            } else {
-                const gn = grad[p] * inv;
-                wSharp = Math.min(1, Math.pow(gn, 0.72) * 1.22);
-            }
-            let ao = Math.round(aS * wSharp + aB * (1 - wSharp));
-            if (aS >= core) {
-                ao = Math.max(ao, aS);
-            }
-            if (aS < 1) ao = 0;
-            const taOut = ao / 255;
-            if (taOut >= 0.35 && taOut <= 0.75) {
-                ao += studioTransitionAlphaMicroNoise(x, y);
-                if (ao < 0) ao = 0;
-                else if (ao > 255) ao = 255;
-            }
-            od[i] = 255;
-            od[i + 1] = 255;
-            od[i + 2] = 255;
-            od[i + 3] = ao;
-        }
-    }
-    return out;
-}
-
-/** Clears temporal edge buffers so Retake / a new capture is not blended with the previous photo's mask. */
-function resetPortraitMaskTemporalState() {
-    _maskEdgeTemporalReady = false;
-    if (_maskEdgeAlphaPrev && _maskEdgeAlphaPrev.length) _maskEdgeAlphaPrev.fill(0);
-    if (_maskEdgeStableCnt && _maskEdgeStableCnt.length) _maskEdgeStableCnt.fill(0);
-    if (_maskEdgeStable && _maskEdgeStable.length) _maskEdgeStable.fill(0);
-}
-
-/**
- * Post-merge mask: temporal blend + stable lock + leak + prev-FG floor (feather merge unchanged).
- * Hair/prot: ≤20% prev only; no stable lock / leak / speckle on them.
- */
-function applyStudioMaskEdgeSolidify(maskImd, w, h, frameRgb) {
-    const d = maskImd.data;
-    const n = w * h;
-    if (!_maskEdgeOrig || _maskEdgeOrig.length < n) {
-        _maskEdgeOrig = new Uint8Array(n);
-        _maskEdgeA = new Uint8Array(n);
-        _maskEdgeHair = new Uint8Array(n);
-        _maskEdgeExempt = new Uint8Array(n);
-        _maskEdgeReach = new Uint8Array(n);
-        _maskEdgeQ = new Int32Array(n);
-        _maskEdgeAlphaPrev = new Uint8Array(n);
-        _maskEdgeStableCnt = new Uint8Array(n);
-        _maskEdgeStable = new Uint8Array(n);
-    }
-    const orig = _maskEdgeOrig;
-    const a = _maskEdgeA;
-    const hair = _maskEdgeHair;
-    const prot = _maskEdgeExempt;
-    const buf = _maskEdgeReach;
-    const q = _maskEdgeQ;
-    const prev = _maskEdgeAlphaPrev;
-    const stableCnt = _maskEdgeStableCnt;
-    const stable = _maskEdgeStable;
-    const STRONG = Math.round(0.6 * 255);
-    const NEIGH_HI = 191;
-    const A50 = Math.round(0.5 * 255);
-    const A60 = Math.round(0.6 * 255);
-    const TLO = Math.round(0.3 * 255);
-    const THI = Math.round(0.7 * 255);
-    const NOISE = Math.round(0.3 * 255);
-    if (_maskEdgeLastW !== w || _maskEdgeLastH !== h) {
-        prev.fill(0);
-        stableCnt.fill(0);
-        stable.fill(0);
-        _maskEdgeTemporalReady = false;
-        _maskEdgeLastW = w;
-        _maskEdgeLastH = h;
-    }
-    const readOrigA = (px, py) => {
-        if (px < 0 || px >= w || py < 0 || py >= h) return 0;
-        return orig[py * w + px];
-    };
-    const floodFromSeeds = (seedFn, passFn) => {
-        buf.fill(0);
-        let qt = 0;
-        let qh = 0;
-        for (let p = 0; p < n; p++) {
-            if (seedFn(p)) {
-                buf[p] = 1;
-                q[qt++] = p;
-            }
-        }
-        while (qh < qt) {
-            const p = q[qh++];
-            const x = p % w;
-            const y = (p / w) | 0;
-            const tryPush = (np) => {
-                if (!buf[np] && passFn(np)) {
-                    buf[np] = 1;
-                    q[qt++] = np;
-                }
-            };
-            if (x > 0) tryPush(p - 1);
-            if (x + 1 < w) tryPush(p + 1);
-            if (y > 0) tryPush(p - w);
-            if (y + 1 < h) tryPush(p + w);
-        }
-    };
-    hair.fill(0);
-    prot.fill(0);
-    for (let p = 0, i = 0; p < n; p++, i += 4) {
-        const oa = d[i + 3];
-        orig[p] = oa;
-        if (frameRgb) {
-            const L = 0.299 * frameRgb[i] + 0.587 * frameRgb[i + 1] + 0.114 * frameRgb[i + 2];
-            const ta0 = oa / 255;
-            if (L < 90 && ta0 >= 0.3 && ta0 <= 0.6) {
-                hair[p] = 1;
-            }
-        }
-    }
-    for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-            const p = y * w + x;
-            const i = p * 4;
-            let strongN = 0;
-            let sumA = 0;
-            let sumR = 0;
-            let sumG = 0;
-            let sumB = 0;
-            let cntCol = 0;
-            let sumSq = 0;
-            for (let dy = -1; dy <= 1; dy++) {
-                for (let dx = -1; dx <= 1; dx++) {
-                    const na = readOrigA(x + dx, y + dy);
-                    sumA += na;
-                    sumSq += na * na;
-                    if (na > STRONG) {
-                        strongN++;
-                        if (frameRgb) {
-                            const j = ((y + dy) * w + (x + dx)) * 4;
-                            sumR += frameRgb[j];
-                            sumG += frameRgb[j + 1];
-                            sumB += frameRgb[j + 2];
-                            cntCol++;
-                        }
-                    }
-                }
-            }
-            const meanA = sumA / 9;
-            const varA = sumSq / 9 - meanA * meanA;
-            if (varA < 220) {
-                prot[p] = 1;
-            }
-            if (strongN >= 3 && frameRgb && cntCol > 0) {
-                const mr = sumR / cntCol;
-                const mg = sumG / cntCol;
-                const mb = sumB / cntCol;
-                const dr = Math.abs(frameRgb[i] - mr);
-                const dg = Math.abs(frameRgb[i + 1] - mg);
-                const db = Math.abs(frameRgb[i + 2] - mb);
-                if (dr < 40 && dg < 40 && db < 40) {
-                    prot[p] = 1;
-                }
-            }
-        }
-    }
-    const skip = p => hair[p] || prot[p];
-    let hasStable = false;
-    for (let p = 0; p < n; p++) {
-        if (stable[p]) {
-            hasStable = true;
-            break;
-        }
-    }
-    if (!_maskEdgeTemporalReady) {
-        for (let p = 0; p < n; p++) {
-            a[p] = orig[p];
-        }
-    } else {
-        for (let p = 0; p < n; p++) {
-            const pr = prev[p];
-            const cur = orig[p];
-            if (skip(p)) {
-                a[p] = Math.round(0.8 * cur + 0.2 * pr);
-            } else if (stable[p]) {
-                a[p] = Math.round(0.8 * pr + 0.2 * cur);
-            } else {
-                const dlt = cur - pr;
-                if (Math.abs(dlt) > 40) {
-                    a[p] = Math.round(pr + dlt * 0.5);
-                } else {
-                    a[p] = Math.round(0.7 * cur + 0.3 * pr);
-                }
-            }
-            if (a[p] < 0) a[p] = 0;
-            else if (a[p] > 255) a[p] = 255;
-        }
-    }
-    floodFromSeeds(
-        p => stable[p] && a[p] > A60,
-        np => a[np] > 30
-    );
-    const stableConn = buf;
-    if (frameRgb) {
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const p = y * w + x;
-                if (skip(p)) continue;
-                const oa = orig[p];
-                if (oa < TLO || oa > THI) continue;
-                const i = p * 4;
-                let sumR = 0;
-                let sumG = 0;
-                let sumB = 0;
-                let cnt = 0;
-                for (let dy = -1; dy <= 1; dy++) {
-                    for (let dx = -1; dx <= 1; dx++) {
-                        const na = readOrigA(x + dx, y + dy);
-                        if (na <= NEIGH_HI) continue;
-                        const j = ((y + dy) * w + (x + dx)) * 4;
-                        sumR += frameRgb[j];
-                        sumG += frameRgb[j + 1];
-                        sumB += frameRgb[j + 2];
-                        cnt++;
-                    }
-                }
-                if (cnt === 0) continue;
-                const mr = sumR / cnt;
-                const mg = sumG / cnt;
-                const mb = sumB / cnt;
-                const dr = Math.abs(frameRgb[i] - mr);
-                const dg = Math.abs(frameRgb[i + 1] - mg);
-                const db = Math.abs(frameRgb[i + 2] - mb);
-                if ((dr > 40 || dg > 40 || db > 40) && (!hasStable || !stableConn[p])) {
-                    let v = Math.round(a[p] * 0.5);
-                    a[p] = v < 0 ? 0 : v > 255 ? 255 : v;
-                }
-            }
-        }
-    }
-    floodFromSeeds(
-        p => prev[p] > A50,
-        np => a[np] > 0
-    );
-    const prevFg = buf;
-    for (let p = 0; p < n; p++) {
-        if (skip(p)) continue;
-        if (prevFg[p] && orig[p] > NOISE) {
-            const floorV = Math.round(prev[p] * 0.8);
-            if (a[p] < floorV) {
-                a[p] = floorV > 255 ? 255 : floorV;
-            }
-        }
-    }
-    for (let p = 0; p < n; p++) {
-        if (skip(p)) continue;
-        if (a[p] < 20 && prev[p] < 2) {
-            a[p] = 0;
-        }
-    }
-    const CAP = 10;
-    const CAP_SOFT = 6;
-    for (let p = 0; p < n; p++) {
-        let v = a[p];
-        const cap = skip(p) ? CAP_SOFT : CAP;
-        const dlt = v - orig[p];
-        v = orig[p] + (dlt > cap ? cap : dlt < -cap ? -cap : dlt);
-        a[p] = v < 0 ? 0 : v > 255 ? 255 : v;
-    }
-    for (let p = 0, i = 0; p < n; p++, i += 4) {
-        d[i + 3] = a[p];
-    }
-    for (let p = 0; p < n; p++) {
-        prev[p] = a[p];
-    }
-    for (let p = 0; p < n; p++) {
-        if (skip(p)) {
-            stableCnt[p] = 0;
-            stable[p] = 0;
-        } else if (a[p] > A60) {
-            const c = stableCnt[p] + 1;
-            stableCnt[p] = c > 250 ? 250 : c;
-            stable[p] = stableCnt[p] >= 3 ? 1 : 0;
-        } else {
-            stableCnt[p] = 0;
-            stable[p] = 0;
-        }
-    }
-    _maskEdgeTemporalReady = true;
-}
-
-function studioSpillTargetLuminance(br, bg, bb) {
-    return 0.299 * br + 0.587 * bg + 0.114 * bb;
-}
-
-function studioClampRgbNotPastMidpointTowardNeutral(o, neu, v) {
-    const mid = (o + neu) * 0.5;
-    if (neu > o && v > mid) return mid;
-    if (neu < o && v < mid) return mid;
-    return v;
-}
-
-/**
- * De-spill: only α/255 < 0.65; skip if Rec.709 L already near target; taper toward 0.65.
- * Transition 0.3–0.7: no stacked sat/av boosts (base k + taper only). Hair 0.3–0.6, L<90: ~50% k,
- * skip if low sat; result stays on original side of midpoint vs neutral; never brighten (L).
- */
-function defringeStudioTransitionRegion(data, br, bg, bb, strengthMul) {
-    const CORE = Math.round(0.85 * 255);
-    const NOISE = Math.round(0.3 * 255);
-    const SPILL_HI = 0.65;
-    const LT0 = studioSpillTargetLuminance(br, bg, bb);
-    const lumNearTarget = 14;
-    const strong = strengthMul > 0.9;
-    const cap = Math.min(0.99, (0.97 * strengthMul + 0.02) * (strong ? 1.05 : 1));
-    const edgeBoost = strong ? 1.12 : 1;
-    const maxD = STUDIO_DESPILL_MAX_DELTA;
-    const hairKMul = 0.5;
-    const transBand = ta => ta >= 0.3 && ta <= 0.7;
-    for (let i = 0; i < data.length; i += 4) {
-        const a0 = data[i + 3];
-        if (a0 <= 0) continue;
-        if (a0 >= CORE) continue;
-        if (a0 < NOISE) {
-            data[i] = 0;
-            data[i + 1] = 0;
-            data[i + 2] = 0;
-            data[i + 3] = 0;
-            continue;
-        }
-        const ta = a0 / 255;
-        if (ta >= SPILL_HI) {
-            continue;
-        }
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        const L = 0.299 * r + 0.587 * g + 0.114 * b;
-        if (Math.abs(L - LT0) < lumNearTarget) {
-            continue;
-        }
-        const hairLike = ta >= 0.3 && ta <= 0.6 && L < 90;
-        const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
-        const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
-        const sat = mx - mn;
-        if (hairLike && sat < 20) {
-            continue;
-        }
-        const inv = (255 - a0) / 255;
-        const transBoost = 1 + ((CORE - a0) / (CORE - NOISE)) * 0.42;
-        let k = Math.min(cap, (inv * inv * 0.94 + inv * 0.26) * strengthMul * transBoost * edgeBoost);
-        if (!transBand(ta)) {
-            const av = (r + g + b) / 3;
-            if (sat > 14) {
-                k = Math.min(cap + 0.1 * strengthMul, k + (sat / 255) * 0.38 * inv * strengthMul * edgeBoost);
-            }
-            if (av > 175) {
-                k = Math.min(cap + 0.12 * strengthMul, k + 0.16 * inv * strengthMul * Math.min(1, (av - 175) / 75) * edgeBoost);
-            }
-            if (av < 75) {
-                k = Math.min(cap + 0.1 * strengthMul, k + 0.13 * inv * strengthMul * Math.min(1, (75 - av) / 75) * edgeBoost);
-            }
-        }
-        const tEdge = (ta - 0.3) / (SPILL_HI - 0.3);
-        let spillEdgeFade = 1;
-        if (tEdge > 0) {
-            spillEdgeFade = tEdge >= 1 ? 0 : 0.5 + 0.5 * Math.cos(Math.PI * tEdge);
-        }
-        k *= spillEdgeFade;
-        if (hairLike) {
-            k *= hairKMul;
-        }
-        const dr = (br - r) * k;
-        const dg = (bg - g) * k;
-        const db = (bb - b) * k;
-        let nr = clampStudioChannelDelta(r, dr, maxD);
-        let ng = clampStudioChannelDelta(g, dg, maxD);
-        let nb = clampStudioChannelDelta(b, db, maxD);
-        if (hairLike) {
-            nr = studioClampRgbNotPastMidpointTowardNeutral(r, br, nr);
-            ng = studioClampRgbNotPastMidpointTowardNeutral(g, bg, ng);
-            nb = studioClampRgbNotPastMidpointTowardNeutral(b, bb, nb);
-        }
-        let L1 = 0.299 * nr + 0.587 * ng + 0.114 * nb;
-        if (L1 > L + 0.35) {
-            nr = r;
-            ng = g;
-            nb = b;
-            L1 = L;
-        }
-        data[i] = nr;
-        data[i + 1] = ng;
-        data[i + 2] = nb;
-    }
-}
-
-/** Remove tiny isolated semi-transparent blobs (post matte) */
-function removeStudioIsolatedSpeckles(data, w, h) {
-    const n = w * h;
-    if (!_studioMaskAlphaScratch || _studioMaskAlphaScratch.length < n) {
-        _studioMaskAlphaScratch = new Uint16Array(n);
-    }
-    const t = _studioMaskAlphaScratch;
-    for (let p = 0, i = 0; p < n; p++, i += 4) {
-        t[p] = data[i + 3];
-    }
-    for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-            const p = y * w + x;
-            const a = t[p];
-            if (a < 12 || a > 95) continue;
-            const ta = a / 255;
-            if (ta >= 0.3 && ta <= 0.7) continue;
-            let s = 0;
-            for (let dy = -1; dy <= 1; dy++) {
-                for (let dx = -1; dx <= 1; dx++) {
-                    s += t[p + dy * w + dx];
-                }
-            }
-            if (s < 380) {
-                const i = p * 4;
-                data[i] = 0;
-                data[i + 1] = 0;
-                data[i + 2] = 0;
-                data[i + 3] = 0;
-            }
-        }
-    }
-}
-
-/**
- * Blend each α with its 3×3 neighbourhood (small mix) — knocks down blocky mask noise without the “mush” of a full box blur (preserves fine hair better).
- */
-function smoothStudioMaskAlphaWeighted(imd, mix) {
-    const w = imd.width;
-    const h = imd.height;
-    const n = w * h;
-    if (!_studioMaskAlphaScratch || _studioMaskAlphaScratch.length < n) {
-        _studioMaskAlphaScratch = new Uint16Array(n);
-    }
-    const tmp = _studioMaskAlphaScratch;
-    const d = imd.data;
-    for (let p = 0, i = 0; p < n; p++, i += 4) {
-        tmp[p] = d[i + 3];
-    }
-    const om = 1 - mix;
-    for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-            let sum = 0;
-            let cnt = 0;
-            const p = y * w + x;
-            const c = tmp[p];
-            for (let dy = -1; dy <= 1; dy++) {
-                const yy = y + dy;
-                if (yy < 0 || yy >= h) continue;
-                for (let dx = -1; dx <= 1; dx++) {
-                    const xx = x + dx;
-                    if (xx < 0 || xx >= w) continue;
-                    sum += tmp[yy * w + xx];
-                    cnt++;
-                }
-            }
-            const mean = sum / cnt;
-            const i = p * 4;
-            d[i + 3] = Math.round(om * c + mix * mean);
-        }
-    }
-}
-
 /**
  * Model mask semantics (body-segmentation): R = part id, G/B = 0, A = foreground probability 0–255.
- * Smoothstep for graded edges; small interior coherence pull reduces patchy “holes” when the model is confident on the person.
+ * Smoothstep for graded edges (reused ImageData buffer to reduce GC).
  */
 function softMaskImageDataFromModelMask(rawIm, quality) {
     const isCapture = quality === 'capture';
@@ -1297,12 +718,13 @@ function softMaskImageDataFromModelMask(rawIm, quality) {
     const hi = 254;
     const mw = rawIm.width;
     const mh = rawIm.height;
-    const src = rawIm.data;
-    const out = new ImageData(mw, mh);
-    const od = out.data;
+    if (!_softMaskReuse || _softMaskReuse.width !== mw || _softMaskReuse.height !== mh) {
+        _softMaskReuse = new ImageData(mw, mh);
+    }
+    const od = _softMaskReuse.data;
     const span = hi - lo;
     for (let i = 0; i < od.length; i += 4) {
-        const rawA = src[i + 3];
+        const rawA = rawIm.data[i + 3];
         let a = rawA;
         if (a < lo) a = 0;
         else if (a > hi) a = 255;
@@ -1311,15 +733,12 @@ function softMaskImageDataFromModelMask(rawIm, quality) {
             const s = t * t * (3 - 2 * t);
             a = Math.round(255 * s);
         }
-        if (rawA > 208 && a > 0 && a < 88) {
-            a = Math.min(255, Math.round((a + rawA * 0.86) * 0.5));
-        }
         od[i] = 255;
         od[i + 1] = 255;
         od[i + 2] = 255;
         od[i + 3] = a;
     }
-    return out;
+    return _softMaskReuse;
 }
 
 /**
@@ -1355,19 +774,18 @@ function copyVideoFrameToCanvas(videoEl, targetCanvas, tw, th) {
 
 /**
  * @param {'preview'|'capture'} [quality] — capture uses slightly stronger mask feather for still photos.
+ * Segmentation always runs on a downscaled copy; output is composited at full display resolution.
  */
 async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 'preview') {
     let w = Math.floor(videoEl.videoWidth);
     let h = Math.floor(videoEl.videoHeight);
     if (!Number.isFinite(w) || !Number.isFinite(h) || w < 2 || h < 2) return false;
-    /* Many vision models expect even width/height */
     w -= w % 2;
     h -= h % 2;
     if (w < 2 || h < 2) return false;
 
-    /* Resizing clears the bitmap — only when dimensions change stops preview flicker */
     if (!ensureCanvasSize(destCanvas, w, h)) return false;
-    const ctx = destCanvas.getContext('2d');
+    const ctx = destCanvas.getContext('2d', { alpha: false });
     if (mode === 'none' || !mode) {
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1379,8 +797,13 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
         ctx.drawImage(videoEl, 0, 0, w, h);
         return false;
     }
-    if (!_segmentSourceCanvas) _segmentSourceCanvas = document.createElement('canvas');
-    if (!copyVideoFrameToCanvas(videoEl, _segmentSourceCanvas, w, h)) {
+
+    const maxSegDim = quality === 'capture'
+        ? Math.min(640, Math.max(portraitSegMaxDim, 480))
+        : portraitSegMaxDim;
+    const { sw, sh } = computePortraitSegDims(w, h, maxSegDim);
+    if (!_portraitSegCanvas) _portraitSegCanvas = document.createElement('canvas');
+    if (!copyVideoFrameToCanvas(videoEl, _portraitSegCanvas, sw, sh)) {
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalAlpha = 1;
@@ -1391,24 +814,26 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
         ctx.drawImage(videoEl, 0, 0, w, h);
         return false;
     }
-    const frameCanvas = _segmentSourceCanvas;
+    const segCanvas = _portraitSegCanvas;
+
     try {
         const API = bodySegApi();
         if (!API) return false;
         const segmenter = await getPortraitSegmenter();
-        const people = await segmenter.segmentPeople(frameCanvas);
+        const people = await segmenter.segmentPeople(segCanvas);
+
         if (mode === 'blur') {
             if (!_portraitBlurStageCanvas) _portraitBlurStageCanvas = document.createElement('canvas');
-            ensureCanvasSize(_portraitBlurStageCanvas, w, h);
-            const bctx = _portraitBlurStageCanvas.getContext('2d');
+            ensureCanvasSize(_portraitBlurStageCanvas, sw, sh);
+            const bctx = _portraitBlurStageCanvas.getContext('2d', { alpha: false });
             bctx.save();
             bctx.setTransform(1, 0, 0, 1, 0, 0);
             bctx.globalAlpha = 1;
             bctx.globalCompositeOperation = 'source-over';
             bctx.filter = 'none';
-            bctx.clearRect(0, 0, w, h);
+            bctx.clearRect(0, 0, sw, sh);
             bctx.restore();
-            await API.drawBokehEffect(_portraitBlurStageCanvas, frameCanvas, people, 0.42, 8, 11, false);
+            await API.drawBokehEffect(_portraitBlurStageCanvas, segCanvas, people, 0.42, 8, 11, false);
             ctx.save();
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.globalAlpha = 1;
@@ -1416,9 +841,12 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
             ctx.filter = 'none';
             ctx.clearRect(0, 0, w, h);
             ctx.restore();
-            ctx.drawImage(_portraitBlurStageCanvas, 0, 0, w, h);
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'low';
+            ctx.drawImage(_portraitBlurStageCanvas, 0, 0, sw, sh, 0, 0, w, h);
             return true;
         }
+
         if (mode === 'solid') {
             const list = Array.isArray(people) ? people : (people ? [people] : []);
             const seg = list[0];
@@ -1430,21 +858,18 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
                 ctx.filter = 'none';
                 ctx.clearRect(0, 0, w, h);
                 ctx.restore();
-                ctx.drawImage(frameCanvas, 0, 0, w, h);
+                ctx.drawImage(videoEl, 0, 0, w, h);
                 return false;
             }
             if (!_solidMaskCanvas) _solidMaskCanvas = document.createElement('canvas');
             if (!_solidFgCanvas) _solidFgCanvas = document.createElement('canvas');
             if (!_solidMaskBlurredCanvas) _solidMaskBlurredCanvas = document.createElement('canvas');
-            if (!_solidMaskHiCanvas) _solidMaskHiCanvas = document.createElement('canvas');
             const mC = _solidMaskCanvas;
             const mBlur = _solidMaskBlurredCanvas;
             const fgC = _solidFgCanvas;
-            const mHi = _solidMaskHiCanvas;
-            const mctx = mC.getContext('2d');
+            const mctx = mC.getContext('2d', { alpha: false });
             let maskW;
             let maskH;
-            let usedSoftMaskStudioPath = false;
             try {
                 const rawIm = await Promise.resolve(seg.mask.toImageData());
                 if (!rawIm?.data?.length || rawIm.width < 2 || rawIm.height < 2) {
@@ -1452,19 +877,17 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
                 }
                 const soft = softMaskImageDataFromModelMask(rawIm, quality);
                 applyStudioMaskNoiseFloor(soft);
-                smoothStudioMaskAlphaWeighted(soft, quality === 'capture' ? 0.2 : 0.16);
-                ensureCanvasSize(mC, soft.width, soft.height);
+                maskW = soft.width;
+                maskH = soft.height;
+                ensureCanvasSize(mC, maskW, maskH);
                 mctx.save();
                 mctx.setTransform(1, 0, 0, 1, 0, 0);
                 mctx.globalAlpha = 1;
                 mctx.globalCompositeOperation = 'source-over';
                 mctx.filter = 'none';
-                mctx.restore();
-                mctx.clearRect(0, 0, mC.width, mC.height);
+                mctx.clearRect(0, 0, maskW, maskH);
                 mctx.putImageData(soft, 0, 0);
-                maskW = soft.width;
-                maskH = soft.height;
-                usedSoftMaskStudioPath = true;
+                mctx.restore();
             } catch {
                 const bin = await API.toBinaryMask(
                     people,
@@ -1481,156 +904,53 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
                     ctx.filter = 'none';
                     ctx.clearRect(0, 0, w, h);
                     ctx.restore();
-                    ctx.drawImage(frameCanvas, 0, 0, w, h);
+                    ctx.drawImage(videoEl, 0, 0, w, h);
                     return false;
                 }
-                ensureCanvasSize(mC, bin.width, bin.height);
+                maskW = bin.width;
+                maskH = bin.height;
+                ensureCanvasSize(mC, maskW, maskH);
                 mctx.save();
                 mctx.setTransform(1, 0, 0, 1, 0, 0);
                 mctx.globalAlpha = 1;
                 mctx.globalCompositeOperation = 'source-over';
                 mctx.filter = 'none';
-                mctx.restore();
-                mctx.clearRect(0, 0, mC.width, mC.height);
+                mctx.clearRect(0, 0, maskW, maskH);
                 mctx.putImageData(bin, 0, 0);
-                maskW = bin.width;
-                maskH = bin.height;
+                mctx.restore();
             }
 
-            const mbCtx = mBlur.getContext('2d');
-            const px = w * h;
-            const isCap = quality === 'capture';
-            const hiPxCap = isCap ? 2_000_000 : 1_350_000;
-            const useHiFeather = px <= hiPxCap;
-            /* Weighted α already anti-aliases lightly — keep GPU feather modest for sharp-yet-smooth studio edges */
-            const hiBlur = isCap ? 4 : 2;
-            const flatBlur = isCap ? 3 : 2;
-            if (useHiFeather) {
-                const cap = 1600;
-                const hw = Math.min(Math.max(w * 2, w), cap);
-                const hh = Math.min(Math.max(h * 2, h), cap);
-                ensureCanvasSize(mHi, hw, hh);
-                const hiCtx = mHi.getContext('2d');
-                hiCtx.save();
-                hiCtx.setTransform(1, 0, 0, 1, 0, 0);
-                hiCtx.globalAlpha = 1;
-                hiCtx.globalCompositeOperation = 'source-over';
-                hiCtx.filter = 'none';
-                hiCtx.restore();
-                hiCtx.clearRect(0, 0, hw, hh);
-                hiCtx.imageSmoothingEnabled = true;
-                hiCtx.imageSmoothingQuality = 'high';
-                hiCtx.filter = `blur(${hiBlur}px)`;
-                hiCtx.drawImage(mC, 0, 0, maskW, maskH, 0, 0, hw, hh);
-                hiCtx.filter = 'none';
-                ensureCanvasSize(mBlur, w, h);
-                mbCtx.save();
-                mbCtx.setTransform(1, 0, 0, 1, 0, 0);
-                mbCtx.globalAlpha = 1;
-                mbCtx.globalCompositeOperation = 'source-over';
-                mbCtx.filter = 'none';
-                mbCtx.restore();
-                mbCtx.clearRect(0, 0, w, h);
-                mbCtx.imageSmoothingEnabled = true;
-                mbCtx.imageSmoothingQuality = 'high';
-                mbCtx.drawImage(mHi, 0, 0, hw, hh, 0, 0, w, h);
-            } else {
-                ensureCanvasSize(mBlur, w, h);
-                mbCtx.save();
-                mbCtx.setTransform(1, 0, 0, 1, 0, 0);
-                mbCtx.globalAlpha = 1;
-                mbCtx.globalCompositeOperation = 'source-over';
-                mbCtx.filter = 'none';
-                mbCtx.restore();
-                mbCtx.clearRect(0, 0, w, h);
-                mbCtx.imageSmoothingEnabled = true;
-                mbCtx.imageSmoothingQuality = 'high';
-                mbCtx.filter = `blur(${flatBlur}px)`;
-                mbCtx.drawImage(mC, 0, 0, maskW, maskH, 0, 0, w, h);
-                mbCtx.filter = 'none';
-            }
-
-            let frameRgbForMask = null;
-            try {
-                const fctx = frameCanvas.getContext('2d', { willReadFrequently: true });
-                frameRgbForMask = fctx.getImageData(0, 0, w, h).data;
-            } catch (_) {
-                /* hair guard uses luminance only when frame is readable */
-            }
-
-            if (usedSoftMaskStudioPath) {
-                if (!_solidMaskFullResCanvas) _solidMaskFullResCanvas = document.createElement('canvas');
-                ensureCanvasSize(_solidMaskFullResCanvas, w, h);
-                const frx = _solidMaskFullResCanvas.getContext('2d', { willReadFrequently: true });
-                frx.save();
-                frx.setTransform(1, 0, 0, 1, 0, 0);
-                frx.globalAlpha = 1;
-                frx.globalCompositeOperation = 'source-over';
-                frx.filter = 'none';
-                frx.restore();
-                frx.imageSmoothingEnabled = true;
-                frx.imageSmoothingQuality = 'high';
-                frx.clearRect(0, 0, w, h);
-                frx.drawImage(mC, 0, 0, maskW, maskH, 0, 0, w, h);
-                try {
-                    const sharpId = frx.getImageData(0, 0, w, h);
-                    const blurId = mbCtx.getImageData(0, 0, w, h);
-                    const { grad, maxG } = computeAlphaGradientMagnitudeFromRgba(sharpId.data, w, h);
-                    const merged = mergeStudioMaskGradientFeather(sharpId.data, blurId.data, w, h, grad, maxG);
-                    applyStudioMaskEdgeSolidify(merged, w, h, frameRgbForMask);
-                    mbCtx.putImageData(merged, 0, 0);
-                } catch (_) {
-                    try {
-                        const blurOnly = mbCtx.getImageData(0, 0, w, h);
-                        applyStudioMaskEdgeSolidify(blurOnly, w, h, frameRgbForMask);
-                        mbCtx.putImageData(blurOnly, 0, 0);
-                    } catch (_e) {
-                        /* keep uniform blur mask */
-                    }
-                }
-            } else {
-                try {
-                    const blurOnly = mbCtx.getImageData(0, 0, w, h);
-                    applyStudioMaskEdgeSolidify(blurOnly, w, h, frameRgbForMask);
-                    mbCtx.putImageData(blurOnly, 0, 0);
-                } catch (_) {
-                    /* keep blurred mask */
-                }
-            }
+            const featherPx = quality === 'capture' ? 3 : 2;
+            ensureCanvasSize(mBlur, maskW, maskH);
+            const mbCtx = mBlur.getContext('2d', { alpha: false });
+            mbCtx.save();
+            mbCtx.setTransform(1, 0, 0, 1, 0, 0);
+            mbCtx.globalAlpha = 1;
+            mbCtx.globalCompositeOperation = 'source-over';
+            mbCtx.clearRect(0, 0, maskW, maskH);
+            mbCtx.imageSmoothingEnabled = true;
+            mbCtx.imageSmoothingQuality = 'low';
+            mbCtx.filter = `blur(${featherPx}px)`;
+            mbCtx.drawImage(mC, 0, 0);
+            mbCtx.filter = 'none';
+            mbCtx.restore();
 
             ensureCanvasSize(fgC, w, h);
-            const fgX = fgC.getContext('2d', { willReadFrequently: true });
+            const fgX = fgC.getContext('2d', { alpha: false });
             fgX.save();
             fgX.setTransform(1, 0, 0, 1, 0, 0);
             fgX.globalAlpha = 1;
             fgX.globalCompositeOperation = 'source-over';
             fgX.filter = 'none';
-            fgX.restore();
-            fgX.imageSmoothingEnabled = true;
-            fgX.imageSmoothingQuality = 'high';
             fgX.clearRect(0, 0, w, h);
-            fgX.drawImage(frameCanvas, 0, 0, w, h);
+            fgX.imageSmoothingEnabled = true;
+            fgX.imageSmoothingQuality = 'low';
+            fgX.drawImage(videoEl, 0, 0, w, h);
             fgX.globalCompositeOperation = 'destination-in';
-            fgX.drawImage(mBlur, 0, 0, w, h);
+            fgX.drawImage(mBlur, 0, 0, maskW, maskH, 0, 0, w, h);
             fgX.globalCompositeOperation = 'source-over';
-            try {
-                const edgeFix = fgX.getImageData(0, 0, w, h);
-                const dmul = quality === 'capture' ? 1 : 0.64;
-                defringeStudioTransitionRegion(
-                    edgeFix.data,
-                    STUDIO_DEFRINGE_RGB.r,
-                    STUDIO_DEFRINGE_RGB.g,
-                    STUDIO_DEFRINGE_RGB.b,
-                    dmul
-                );
-                suppressStudioEdgeAlphaNoise(edgeFix.data);
-                removeStudioIsolatedSpeckles(edgeFix.data, w, h);
-                applyStudioFaceRegionLighting(edgeFix.data, w, h);
-                fgX.putImageData(edgeFix, 0, 0);
-            } catch (_) {
-                /* tainted canvas etc. */
-            }
-            applyStudioSubjectToneAlign(fgX, w, h);
+            fgX.restore();
+
             ctx.save();
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.globalAlpha = 1;
@@ -1653,7 +973,7 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
     ctx.filter = 'none';
     ctx.clearRect(0, 0, w, h);
     ctx.restore();
-    ctx.drawImage(frameCanvas, 0, 0, w, h);
+    ctx.drawImage(videoEl, 0, 0, w, h);
     return false;
 }
 
@@ -1699,6 +1019,7 @@ async function runOnePortraitPreviewFrame() {
         return;
     }
     if (portraitPreviewProcessing) {
+        schedulePortraitPreviewNext();
         return;
     }
     if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) {
@@ -1714,6 +1035,7 @@ async function runOnePortraitPreviewFrame() {
         return;
     }
     portraitPreviewProcessing = true;
+    const t0 = performance.now();
     try {
         await renderPortraitFrameToCanvas(videoPreviewEffect, video, getPhotoBgMode());
         if (webcamCanvasArea) webcamCanvasArea.classList.add('preview-fx-active');
@@ -1723,7 +1045,8 @@ async function runOnePortraitPreviewFrame() {
         showToast('Background effect failed to load — check network or try Natural.', 'warning');
     } finally {
         portraitPreviewProcessing = false;
-        portraitPreviewNextAllowed = performance.now() + PORTRAIT_PREVIEW_MIN_GAP_MS;
+        portraitPreviewNextAllowed = performance.now() + portraitMinFrameGapMs;
+        portraitNoteProcessingDuration(performance.now() - t0);
     }
     if (portraitPreviewActive && video.srcObject && getPhotoBgMode() !== 'none') {
         schedulePortraitPreviewNext();
