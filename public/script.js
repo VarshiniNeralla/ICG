@@ -109,6 +109,8 @@ let _solidFgCanvas = null;
 /** Downscaled RGB snapshot for segmentation (never full-res ML). */
 let _portraitSegCanvas = null;
 let _solidMaskBlurredCanvas = null;
+/** Feathered mask scaled to full video dimensions (single coordinate system for compositing). */
+let _portraitMaskFullCanvas = null;
 /** Single blit to preview canvas reduces visible tearing vs painting bokeh directly on the live canvas. */
 let _portraitBlurStageCanvas = null;
 let portraitPreviewNextAllowed = 0;
@@ -777,14 +779,35 @@ function copyVideoFrameToCanvas(videoEl, targetCanvas, tw, th) {
     return true;
 }
 
-/** True if any mask alpha is meaningfully above zero (fail-safe empty-mask detection). */
-function portraitMaskImageDataHasAlpha(imd, threshold = 8) {
-    if (!imd?.data?.length) return false;
+const PORTRAIT_MASK_ALPHA_SAMPLE = 5;
+/** Minimum % of pixels with alpha > sample threshold to treat mask as “strong” (logging only). */
+const PORTRAIT_MASK_STRONG_COVERAGE_PCT = 2;
+
+/** % of pixels with alpha > `alphaThreshold` (0–100). */
+function portraitMaskCoveragePercent(imd, alphaThreshold = PORTRAIT_MASK_ALPHA_SAMPLE) {
+    if (!imd?.data?.length) return 0;
+    const d = imd.data;
+    const n = d.length >> 2;
+    if (n === 0) return 0;
+    let hi = 0;
+    for (let i = 3; i < d.length; i += 4) {
+        if (d[i] > alphaThreshold) hi++;
+    }
+    return (100 * hi) / n;
+}
+
+/** Fail-safe only when segmentation produced no usable foreground alpha. */
+function portraitMaskIsCompletelyEmpty(imd) {
+    return portraitMaskCoveragePercent(imd, PORTRAIT_MASK_ALPHA_SAMPLE) <= 0;
+}
+
+/** Visualization-only: strengthen soft alphas so borderline masks still matte (does not affect ML). */
+function portraitMaskAlphaBoostVisualization(imd) {
     const d = imd.data;
     for (let i = 3; i < d.length; i += 4) {
-        if (d[i] > threshold) return true;
+        if (d[i] === 0) continue;
+        d[i] = Math.min(255, Math.round(d[i] * 1.5));
     }
-    return false;
 }
 
 /** `?portraitDebugMask=1` or `window.__ICG_PORTRAIT_DEBUG_MASK = true` — draws the feathered mask full-frame. */
@@ -797,31 +820,51 @@ function portraitDebugMaskEnabled() {
     }
 }
 
+/** `?portraitLog=1` — extra console logging + weak-mask dev stripe. */
+function portraitVerboseMaskLog() {
+    if (typeof window !== 'undefined' && window.__ICG_PORTRAIT_VERBOSE_LOG) return true;
+    try {
+        return typeof location !== 'undefined' && new URLSearchParams(location.search).get('portraitLog') === '1';
+    } catch {
+        return false;
+    }
+}
+
+/** `?portraitHardTest=1` — white background + masked subject only (compositing sanity check). */
+function portraitHardTestEnabled() {
+    if (typeof window !== 'undefined' && window.__ICG_PORTRAIT_HARD_TEST) return true;
+    try {
+        return typeof location !== 'undefined' && new URLSearchParams(location.search).get('portraitHardTest') === '1';
+    } catch {
+        return false;
+    }
+}
+
 /**
  * Builds soft or binary mask on mC and feathered alpha on mBlur. Mutates _solidMaskCanvas / _solidMaskBlurredCanvas.
  * Contexts are acquired after each `ensureCanvasSize` so they are never stale.
- * @returns {Promise<{ ok: boolean, maskW: number, maskH: number }>}
+ * @returns {Promise<{ ok: boolean, maskW: number, maskH: number, coveragePercent: number }>}
  */
 async function buildPortraitFeatheredMask(people, API, quality, mC, mBlur) {
     const list = Array.isArray(people) ? people : (people ? [people] : []);
     const seg = list[0];
     let maskW = 0;
     let maskH = 0;
-    if (!seg?.mask) {
-        const bin = await API.toBinaryMask(
-            people,
-            { r: 255, g: 255, b: 255, a: 255 },
-            { r: 0, g: 0, b: 0, a: 0 },
-            false,
-            0.36
-        );
-        if (!bin?.width || !bin.height || !portraitMaskImageDataHasAlpha(bin)) {
-            return { ok: false, maskW: 0, maskH: 0 };
-        }
+    let coveragePercent = 0;
+
+    const commitBinaryToMC = (bin) => {
         maskW = bin.width;
         maskH = bin.height;
+        coveragePercent = portraitMaskCoveragePercent(bin, PORTRAIT_MASK_ALPHA_SAMPLE);
+        if (portraitMaskIsCompletelyEmpty(bin)) {
+            return false;
+        }
+        if (coveragePercent > 0 && coveragePercent < PORTRAIT_MASK_STRONG_COVERAGE_PCT) {
+            portraitMaskAlphaBoostVisualization(bin);
+            coveragePercent = portraitMaskCoveragePercent(bin, PORTRAIT_MASK_ALPHA_SAMPLE);
+        }
         ensureCanvasSize(mC, maskW, maskH);
-        const mx = mC.getContext('2d', { alpha: false });
+        const mx = mC.getContext('2d', { alpha: true });
         mx.save();
         mx.setTransform(1, 0, 0, 1, 0, 0);
         mx.globalAlpha = 1;
@@ -830,6 +873,45 @@ async function buildPortraitFeatheredMask(people, API, quality, mC, mBlur) {
         mx.clearRect(0, 0, maskW, maskH);
         mx.putImageData(bin, 0, 0);
         mx.restore();
+        return true;
+    };
+
+    const commitSoftToMC = (soft) => {
+        applyStudioMaskNoiseFloor(soft);
+        coveragePercent = portraitMaskCoveragePercent(soft, PORTRAIT_MASK_ALPHA_SAMPLE);
+        if (portraitMaskIsCompletelyEmpty(soft)) {
+            return false;
+        }
+        if (coveragePercent > 0 && coveragePercent < PORTRAIT_MASK_STRONG_COVERAGE_PCT) {
+            portraitMaskAlphaBoostVisualization(soft);
+            coveragePercent = portraitMaskCoveragePercent(soft, PORTRAIT_MASK_ALPHA_SAMPLE);
+        }
+        maskW = soft.width;
+        maskH = soft.height;
+        ensureCanvasSize(mC, maskW, maskH);
+        const mx = mC.getContext('2d', { alpha: true });
+        mx.save();
+        mx.setTransform(1, 0, 0, 1, 0, 0);
+        mx.globalAlpha = 1;
+        mx.globalCompositeOperation = 'source-over';
+        mx.filter = 'none';
+        mx.clearRect(0, 0, maskW, maskH);
+        mx.putImageData(soft, 0, 0);
+        mx.restore();
+        return true;
+    };
+
+    if (!seg?.mask) {
+        const bin = await API.toBinaryMask(
+            people,
+            { r: 255, g: 255, b: 255, a: 255 },
+            { r: 0, g: 0, b: 0, a: 0 },
+            false,
+            0.36
+        );
+        if (!bin?.width || !bin.height || !commitBinaryToMC(bin)) {
+            return { ok: false, maskW: 0, maskH: 0, coveragePercent: 0 };
+        }
     } else {
         try {
             const rawIm = await Promise.resolve(seg.mask.toImageData());
@@ -837,22 +919,9 @@ async function buildPortraitFeatheredMask(people, API, quality, mC, mBlur) {
                 throw new Error('empty soft mask');
             }
             const soft = softMaskImageDataFromModelMask(rawIm, quality);
-            applyStudioMaskNoiseFloor(soft);
-            if (!portraitMaskImageDataHasAlpha(soft)) {
-                return { ok: false, maskW: 0, maskH: 0 };
+            if (!commitSoftToMC(soft)) {
+                return { ok: false, maskW: 0, maskH: 0, coveragePercent: 0 };
             }
-            maskW = soft.width;
-            maskH = soft.height;
-            ensureCanvasSize(mC, maskW, maskH);
-            const mx = mC.getContext('2d', { alpha: false });
-            mx.save();
-            mx.setTransform(1, 0, 0, 1, 0, 0);
-            mx.globalAlpha = 1;
-            mx.globalCompositeOperation = 'source-over';
-            mx.filter = 'none';
-            mx.clearRect(0, 0, maskW, maskH);
-            mx.putImageData(soft, 0, 0);
-            mx.restore();
         } catch {
             const bin = await API.toBinaryMask(
                 people,
@@ -861,26 +930,14 @@ async function buildPortraitFeatheredMask(people, API, quality, mC, mBlur) {
                 false,
                 0.36
             );
-            if (!bin?.width || !bin.height || !portraitMaskImageDataHasAlpha(bin)) {
-                return { ok: false, maskW: 0, maskH: 0 };
+            if (!bin?.width || !bin.height || !commitBinaryToMC(bin)) {
+                return { ok: false, maskW: 0, maskH: 0, coveragePercent: 0 };
             }
-            maskW = bin.width;
-            maskH = bin.height;
-            ensureCanvasSize(mC, maskW, maskH);
-            const mx = mC.getContext('2d', { alpha: false });
-            mx.save();
-            mx.setTransform(1, 0, 0, 1, 0, 0);
-            mx.globalAlpha = 1;
-            mx.globalCompositeOperation = 'source-over';
-            mx.filter = 'none';
-            mx.clearRect(0, 0, maskW, maskH);
-            mx.putImageData(bin, 0, 0);
-            mx.restore();
         }
     }
     const featherPx = quality === 'capture' ? 3 : 2;
     ensureCanvasSize(mBlur, maskW, maskH);
-    const bx = mBlur.getContext('2d', { alpha: false });
+    const bx = mBlur.getContext('2d', { alpha: true });
     bx.save();
     bx.setTransform(1, 0, 0, 1, 0, 0);
     bx.globalAlpha = 1;
@@ -893,7 +950,7 @@ async function buildPortraitFeatheredMask(people, API, quality, mC, mBlur) {
     bx.drawImage(mC, 0, 0);
     bx.filter = 'none';
     bx.restore();
-    return { ok: true, maskW, maskH };
+    return { ok: true, maskW, maskH, coveragePercent };
 }
 
 /**
@@ -963,6 +1020,19 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
         const segmenter = await getPortraitSegmenter();
         const people = await segmenter.segmentPeople(segCanvas);
 
+        const plist = Array.isArray(people) ? people : (people ? [people] : []);
+        const seg0 = plist[0];
+        if (portraitDebugMaskEnabled() || portraitVerboseMaskLog()) {
+            console.log('Segmentation result:', {
+                people,
+                firstKeys: seg0 ? Object.keys(seg0) : [],
+                hasMask: !!(seg0 && seg0.mask),
+            });
+            if (typeof tf !== 'undefined' && typeof tf.getBackend === 'function') {
+                console.log('TF Backend:', tf.getBackend());
+            }
+        }
+
         if (!_solidMaskCanvas) _solidMaskCanvas = document.createElement('canvas');
         if (!_solidFgCanvas) _solidFgCanvas = document.createElement('canvas');
         if (!_solidMaskBlurredCanvas) _solidMaskBlurredCanvas = document.createElement('canvas');
@@ -972,19 +1042,43 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
 
         const maskRes = await buildPortraitFeatheredMask(people, API, quality, mC, mBlur);
         if (!maskRes.ok) {
+            console.warn(
+                'Portrait: fail-safe — mask has 0% coverage (segmentation / model / backend). Background effects skipped.',
+                { coveragePercent: maskRes.coveragePercent }
+            );
             drawFailSafeVideo();
             return false;
         }
-        const { maskW, maskH } = maskRes;
+        const { maskW, maskH, coveragePercent } = maskRes;
+
+        if (!_portraitMaskFullCanvas) _portraitMaskFullCanvas = document.createElement('canvas');
+        ensureCanvasSize(_portraitMaskFullCanvas, w, h);
+        const mf = _portraitMaskFullCanvas.getContext('2d', { alpha: true });
+        mf.save();
+        mf.setTransform(1, 0, 0, 1, 0, 0);
+        mf.globalAlpha = 1;
+        mf.globalCompositeOperation = 'source-over';
+        mf.filter = 'none';
+        mf.clearRect(0, 0, w, h);
+        mf.imageSmoothingEnabled = true;
+        mf.imageSmoothingQuality = 'low';
+        mf.drawImage(mBlur, 0, 0, maskW, maskH, 0, 0, w, h);
+        mf.restore();
 
         if (portraitDebugMaskEnabled()) {
+            const maskImd = mf.getImageData(0, 0, w, h);
             ctx.save();
             resetCtx2d(ctx);
             ctx.clearRect(0, 0, w, h);
             ctx.restore();
             resetCtx2d(ctx);
-            ctx.drawImage(mBlur, 0, 0, maskW, maskH, 0, 0, w, h);
+            ctx.putImageData(maskImd, 0, 0);
+            console.log('Mask coverage:', coveragePercent);
             return true;
+        }
+
+        if (portraitVerboseMaskLog()) {
+            console.log('Mask coverage:', coveragePercent);
         }
 
         const fgX = fgC.getContext('2d', { alpha: false });
@@ -996,9 +1090,40 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
         fgX.imageSmoothingQuality = 'low';
         fgX.drawImage(videoEl, 0, 0, w, h);
         fgX.globalCompositeOperation = 'destination-in';
-        fgX.drawImage(mBlur, 0, 0, maskW, maskH, 0, 0, w, h);
+        fgX.drawImage(_portraitMaskFullCanvas, 0, 0, w, h);
         fgX.globalCompositeOperation = 'source-over';
         fgX.restore();
+
+        const drawWeakMaskDevStripe = () => {
+            if (
+                portraitVerboseMaskLog()
+                && coveragePercent > 0
+                && coveragePercent < PORTRAIT_MASK_STRONG_COVERAGE_PCT
+            ) {
+                console.warn('Portrait: weak mask coverage (still compositing)', coveragePercent);
+                ctx.save();
+                resetCtx2d(ctx);
+                ctx.fillStyle = 'rgba(255, 214, 0, 0.82)';
+                ctx.fillRect(0, h - 8, w, 8);
+                ctx.restore();
+            }
+        };
+
+        if (portraitHardTestEnabled()) {
+            ctx.save();
+            resetCtx2d(ctx);
+            ctx.clearRect(0, 0, w, h);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.restore();
+            resetCtx2d(ctx);
+            ctx.drawImage(fgC, 0, 0, w, h);
+            if (portraitVerboseMaskLog()) {
+                console.log('Portrait hard-test: white fill + masked subject (compositing check)');
+            }
+            drawWeakMaskDevStripe();
+            return true;
+        }
 
         if (mode === 'blur') {
             if (!_portraitBlurStageCanvas) _portraitBlurStageCanvas = document.createElement('canvas');
@@ -1022,6 +1147,7 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
             resetCtx2d(ctx);
             ctx.drawImage(_portraitBlurStageCanvas, 0, 0, w, h);
             ctx.drawImage(fgC, 0, 0, w, h);
+            drawWeakMaskDevStripe();
             return true;
         }
 
@@ -1034,6 +1160,7 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
             fillStudioBackdropGradient(ctx, w, h);
             drawStudioContactShadow(ctx, w, h);
             ctx.drawImage(fgC, 0, 0, w, h);
+            drawWeakMaskDevStripe();
             return true;
         }
     } catch (err) {
