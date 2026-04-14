@@ -643,6 +643,10 @@ const STUDIO_BACKDROP_EDGE = '#e1e4ed';
 
 /** Radial studio fill: brighter key behind upper subject, gentle falloff toward slightly cooler edges */
 function fillStudioBackdropGradient(ctx, w, h) {
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.filter = 'none';
     const mx = w * 0.5;
     const my = h * 0.34;
     const r = Math.hypot(w, h) * 0.78;
@@ -652,6 +656,7 @@ function fillStudioBackdropGradient(ctx, w, h) {
     g.addColorStop(1, STUDIO_BACKDROP_EDGE);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
+    ctx.restore();
 }
 
 /** Deterministic opacity scale (≤1% total spread) for barely perceptible shadow variation */
@@ -772,6 +777,125 @@ function copyVideoFrameToCanvas(videoEl, targetCanvas, tw, th) {
     return true;
 }
 
+/** True if any mask alpha is meaningfully above zero (fail-safe empty-mask detection). */
+function portraitMaskImageDataHasAlpha(imd, threshold = 8) {
+    if (!imd?.data?.length) return false;
+    const d = imd.data;
+    for (let i = 3; i < d.length; i += 4) {
+        if (d[i] > threshold) return true;
+    }
+    return false;
+}
+
+/** `?portraitDebugMask=1` or `window.__ICG_PORTRAIT_DEBUG_MASK = true` — draws the feathered mask full-frame. */
+function portraitDebugMaskEnabled() {
+    if (typeof window !== 'undefined' && window.__ICG_PORTRAIT_DEBUG_MASK) return true;
+    try {
+        return typeof location !== 'undefined' && new URLSearchParams(location.search).get('portraitDebugMask') === '1';
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Builds soft or binary mask on mC and feathered alpha on mBlur. Mutates _solidMaskCanvas / _solidMaskBlurredCanvas.
+ * Contexts are acquired after each `ensureCanvasSize` so they are never stale.
+ * @returns {Promise<{ ok: boolean, maskW: number, maskH: number }>}
+ */
+async function buildPortraitFeatheredMask(people, API, quality, mC, mBlur) {
+    const list = Array.isArray(people) ? people : (people ? [people] : []);
+    const seg = list[0];
+    let maskW = 0;
+    let maskH = 0;
+    if (!seg?.mask) {
+        const bin = await API.toBinaryMask(
+            people,
+            { r: 255, g: 255, b: 255, a: 255 },
+            { r: 0, g: 0, b: 0, a: 0 },
+            false,
+            0.36
+        );
+        if (!bin?.width || !bin.height || !portraitMaskImageDataHasAlpha(bin)) {
+            return { ok: false, maskW: 0, maskH: 0 };
+        }
+        maskW = bin.width;
+        maskH = bin.height;
+        ensureCanvasSize(mC, maskW, maskH);
+        const mx = mC.getContext('2d', { alpha: false });
+        mx.save();
+        mx.setTransform(1, 0, 0, 1, 0, 0);
+        mx.globalAlpha = 1;
+        mx.globalCompositeOperation = 'source-over';
+        mx.filter = 'none';
+        mx.clearRect(0, 0, maskW, maskH);
+        mx.putImageData(bin, 0, 0);
+        mx.restore();
+    } else {
+        try {
+            const rawIm = await Promise.resolve(seg.mask.toImageData());
+            if (!rawIm?.data?.length || rawIm.width < 2 || rawIm.height < 2) {
+                throw new Error('empty soft mask');
+            }
+            const soft = softMaskImageDataFromModelMask(rawIm, quality);
+            applyStudioMaskNoiseFloor(soft);
+            if (!portraitMaskImageDataHasAlpha(soft)) {
+                return { ok: false, maskW: 0, maskH: 0 };
+            }
+            maskW = soft.width;
+            maskH = soft.height;
+            ensureCanvasSize(mC, maskW, maskH);
+            const mx = mC.getContext('2d', { alpha: false });
+            mx.save();
+            mx.setTransform(1, 0, 0, 1, 0, 0);
+            mx.globalAlpha = 1;
+            mx.globalCompositeOperation = 'source-over';
+            mx.filter = 'none';
+            mx.clearRect(0, 0, maskW, maskH);
+            mx.putImageData(soft, 0, 0);
+            mx.restore();
+        } catch {
+            const bin = await API.toBinaryMask(
+                people,
+                { r: 255, g: 255, b: 255, a: 255 },
+                { r: 0, g: 0, b: 0, a: 0 },
+                false,
+                0.36
+            );
+            if (!bin?.width || !bin.height || !portraitMaskImageDataHasAlpha(bin)) {
+                return { ok: false, maskW: 0, maskH: 0 };
+            }
+            maskW = bin.width;
+            maskH = bin.height;
+            ensureCanvasSize(mC, maskW, maskH);
+            const mx = mC.getContext('2d', { alpha: false });
+            mx.save();
+            mx.setTransform(1, 0, 0, 1, 0, 0);
+            mx.globalAlpha = 1;
+            mx.globalCompositeOperation = 'source-over';
+            mx.filter = 'none';
+            mx.clearRect(0, 0, maskW, maskH);
+            mx.putImageData(bin, 0, 0);
+            mx.restore();
+        }
+    }
+    const featherPx = quality === 'capture' ? 3 : 2;
+    ensureCanvasSize(mBlur, maskW, maskH);
+    const bx = mBlur.getContext('2d', { alpha: false });
+    bx.save();
+    bx.setTransform(1, 0, 0, 1, 0, 0);
+    bx.globalAlpha = 1;
+    bx.globalCompositeOperation = 'source-over';
+    bx.filter = 'none';
+    bx.clearRect(0, 0, maskW, maskH);
+    bx.imageSmoothingEnabled = true;
+    bx.imageSmoothingQuality = 'low';
+    bx.filter = `blur(${featherPx}px)`;
+    bx.drawImage(mC, 0, 0);
+    bx.filter = 'none';
+    bx.restore();
+    return { ok: true, maskW, maskH };
+}
+
 /**
  * @param {'preview'|'capture'} [quality] — capture uses slightly stronger mask feather for still photos.
  * Segmentation always runs on a downscaled copy; output is composited at full display resolution.
@@ -786,14 +910,21 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
 
     if (!ensureCanvasSize(destCanvas, w, h)) return false;
     const ctx = destCanvas.getContext('2d', { alpha: false });
+
+    const resetCtx2d = (c) => {
+        c.setTransform(1, 0, 0, 1, 0, 0);
+        c.globalAlpha = 1;
+        c.globalCompositeOperation = 'source-over';
+        c.filter = 'none';
+    };
+
+    /** Step 1 — clear; Step 2 — natural = full-frame video only. */
     if (mode === 'none' || !mode) {
         ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.filter = 'none';
+        resetCtx2d(ctx);
         ctx.clearRect(0, 0, w, h);
         ctx.restore();
+        resetCtx2d(ctx);
         ctx.drawImage(videoEl, 0, 0, w, h);
         return false;
     }
@@ -805,175 +936,110 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
     if (!_portraitSegCanvas) _portraitSegCanvas = document.createElement('canvas');
     if (!copyVideoFrameToCanvas(videoEl, _portraitSegCanvas, sw, sh)) {
         ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.filter = 'none';
+        resetCtx2d(ctx);
         ctx.clearRect(0, 0, w, h);
         ctx.restore();
+        resetCtx2d(ctx);
         ctx.drawImage(videoEl, 0, 0, w, h);
         return false;
     }
     const segCanvas = _portraitSegCanvas;
 
+    const drawFailSafeVideo = () => {
+        ctx.save();
+        resetCtx2d(ctx);
+        ctx.clearRect(0, 0, w, h);
+        ctx.restore();
+        resetCtx2d(ctx);
+        ctx.drawImage(videoEl, 0, 0, w, h);
+    };
+
     try {
         const API = bodySegApi();
-        if (!API) return false;
+        if (!API) {
+            drawFailSafeVideo();
+            return false;
+        }
         const segmenter = await getPortraitSegmenter();
         const people = await segmenter.segmentPeople(segCanvas);
 
-        if (mode === 'blur') {
-            if (!_portraitBlurStageCanvas) _portraitBlurStageCanvas = document.createElement('canvas');
-            ensureCanvasSize(_portraitBlurStageCanvas, sw, sh);
-            const bctx = _portraitBlurStageCanvas.getContext('2d', { alpha: false });
-            bctx.save();
-            bctx.setTransform(1, 0, 0, 1, 0, 0);
-            bctx.globalAlpha = 1;
-            bctx.globalCompositeOperation = 'source-over';
-            bctx.filter = 'none';
-            bctx.clearRect(0, 0, sw, sh);
-            bctx.restore();
-            await API.drawBokehEffect(_portraitBlurStageCanvas, segCanvas, people, 0.42, 8, 11, false);
+        if (!_solidMaskCanvas) _solidMaskCanvas = document.createElement('canvas');
+        if (!_solidFgCanvas) _solidFgCanvas = document.createElement('canvas');
+        if (!_solidMaskBlurredCanvas) _solidMaskBlurredCanvas = document.createElement('canvas');
+        const mC = _solidMaskCanvas;
+        const mBlur = _solidMaskBlurredCanvas;
+        const fgC = _solidFgCanvas;
+
+        const maskRes = await buildPortraitFeatheredMask(people, API, quality, mC, mBlur);
+        if (!maskRes.ok) {
+            drawFailSafeVideo();
+            return false;
+        }
+        const { maskW, maskH } = maskRes;
+
+        if (portraitDebugMaskEnabled()) {
             ctx.save();
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
-            ctx.globalAlpha = 1;
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.filter = 'none';
+            resetCtx2d(ctx);
             ctx.clearRect(0, 0, w, h);
             ctx.restore();
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'low';
-            ctx.drawImage(_portraitBlurStageCanvas, 0, 0, sw, sh, 0, 0, w, h);
+            resetCtx2d(ctx);
+            ctx.drawImage(mBlur, 0, 0, maskW, maskH, 0, 0, w, h);
+            return true;
+        }
+
+        const fgX = fgC.getContext('2d', { alpha: false });
+        ensureCanvasSize(fgC, w, h);
+        fgX.save();
+        resetCtx2d(fgX);
+        fgX.clearRect(0, 0, w, h);
+        fgX.imageSmoothingEnabled = true;
+        fgX.imageSmoothingQuality = 'low';
+        fgX.drawImage(videoEl, 0, 0, w, h);
+        fgX.globalCompositeOperation = 'destination-in';
+        fgX.drawImage(mBlur, 0, 0, maskW, maskH, 0, 0, w, h);
+        fgX.globalCompositeOperation = 'source-over';
+        fgX.restore();
+
+        if (mode === 'blur') {
+            if (!_portraitBlurStageCanvas) _portraitBlurStageCanvas = document.createElement('canvas');
+            ensureCanvasSize(_portraitBlurStageCanvas, w, h);
+            const bctx = _portraitBlurStageCanvas.getContext('2d', { alpha: false });
+            bctx.save();
+            resetCtx2d(bctx);
+            bctx.clearRect(0, 0, w, h);
+            bctx.imageSmoothingEnabled = true;
+            bctx.imageSmoothingQuality = 'low';
+            const fullBlurPx = quality === 'capture' ? 12 : 11;
+            bctx.filter = `blur(${fullBlurPx}px)`;
+            bctx.drawImage(videoEl, 0, 0, w, h);
+            bctx.filter = 'none';
+            bctx.restore();
+
+            ctx.save();
+            resetCtx2d(ctx);
+            ctx.clearRect(0, 0, w, h);
+            ctx.restore();
+            resetCtx2d(ctx);
+            ctx.drawImage(_portraitBlurStageCanvas, 0, 0, w, h);
+            ctx.drawImage(fgC, 0, 0, w, h);
             return true;
         }
 
         if (mode === 'solid') {
-            const list = Array.isArray(people) ? people : (people ? [people] : []);
-            const seg = list[0];
-            if (!seg?.mask) {
-                ctx.save();
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                ctx.globalAlpha = 1;
-                ctx.globalCompositeOperation = 'source-over';
-                ctx.filter = 'none';
-                ctx.clearRect(0, 0, w, h);
-                ctx.restore();
-                ctx.drawImage(videoEl, 0, 0, w, h);
-                return false;
-            }
-            if (!_solidMaskCanvas) _solidMaskCanvas = document.createElement('canvas');
-            if (!_solidFgCanvas) _solidFgCanvas = document.createElement('canvas');
-            if (!_solidMaskBlurredCanvas) _solidMaskBlurredCanvas = document.createElement('canvas');
-            const mC = _solidMaskCanvas;
-            const mBlur = _solidMaskBlurredCanvas;
-            const fgC = _solidFgCanvas;
-            const mctx = mC.getContext('2d', { alpha: false });
-            let maskW;
-            let maskH;
-            try {
-                const rawIm = await Promise.resolve(seg.mask.toImageData());
-                if (!rawIm?.data?.length || rawIm.width < 2 || rawIm.height < 2) {
-                    throw new Error('empty soft mask');
-                }
-                const soft = softMaskImageDataFromModelMask(rawIm, quality);
-                applyStudioMaskNoiseFloor(soft);
-                maskW = soft.width;
-                maskH = soft.height;
-                ensureCanvasSize(mC, maskW, maskH);
-                mctx.save();
-                mctx.setTransform(1, 0, 0, 1, 0, 0);
-                mctx.globalAlpha = 1;
-                mctx.globalCompositeOperation = 'source-over';
-                mctx.filter = 'none';
-                mctx.clearRect(0, 0, maskW, maskH);
-                mctx.putImageData(soft, 0, 0);
-                mctx.restore();
-            } catch {
-                const bin = await API.toBinaryMask(
-                    people,
-                    { r: 255, g: 255, b: 255, a: 255 },
-                    { r: 0, g: 0, b: 0, a: 0 },
-                    false,
-                    0.36
-                );
-                if (!bin?.width || !bin.height) {
-                    ctx.save();
-                    ctx.setTransform(1, 0, 0, 1, 0, 0);
-                    ctx.globalAlpha = 1;
-                    ctx.globalCompositeOperation = 'source-over';
-                    ctx.filter = 'none';
-                    ctx.clearRect(0, 0, w, h);
-                    ctx.restore();
-                    ctx.drawImage(videoEl, 0, 0, w, h);
-                    return false;
-                }
-                maskW = bin.width;
-                maskH = bin.height;
-                ensureCanvasSize(mC, maskW, maskH);
-                mctx.save();
-                mctx.setTransform(1, 0, 0, 1, 0, 0);
-                mctx.globalAlpha = 1;
-                mctx.globalCompositeOperation = 'source-over';
-                mctx.filter = 'none';
-                mctx.clearRect(0, 0, maskW, maskH);
-                mctx.putImageData(bin, 0, 0);
-                mctx.restore();
-            }
-
-            const featherPx = quality === 'capture' ? 3 : 2;
-            ensureCanvasSize(mBlur, maskW, maskH);
-            const mbCtx = mBlur.getContext('2d', { alpha: false });
-            mbCtx.save();
-            mbCtx.setTransform(1, 0, 0, 1, 0, 0);
-            mbCtx.globalAlpha = 1;
-            mbCtx.globalCompositeOperation = 'source-over';
-            mbCtx.clearRect(0, 0, maskW, maskH);
-            mbCtx.imageSmoothingEnabled = true;
-            mbCtx.imageSmoothingQuality = 'low';
-            mbCtx.filter = `blur(${featherPx}px)`;
-            mbCtx.drawImage(mC, 0, 0);
-            mbCtx.filter = 'none';
-            mbCtx.restore();
-
-            ensureCanvasSize(fgC, w, h);
-            const fgX = fgC.getContext('2d', { alpha: false });
-            fgX.save();
-            fgX.setTransform(1, 0, 0, 1, 0, 0);
-            fgX.globalAlpha = 1;
-            fgX.globalCompositeOperation = 'source-over';
-            fgX.filter = 'none';
-            fgX.clearRect(0, 0, w, h);
-            fgX.imageSmoothingEnabled = true;
-            fgX.imageSmoothingQuality = 'low';
-            fgX.drawImage(videoEl, 0, 0, w, h);
-            fgX.globalCompositeOperation = 'destination-in';
-            fgX.drawImage(mBlur, 0, 0, maskW, maskH, 0, 0, w, h);
-            fgX.globalCompositeOperation = 'source-over';
-            fgX.restore();
-
             ctx.save();
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
-            ctx.globalAlpha = 1;
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.filter = 'none';
+            resetCtx2d(ctx);
             ctx.clearRect(0, 0, w, h);
             ctx.restore();
+            resetCtx2d(ctx);
             fillStudioBackdropGradient(ctx, w, h);
             drawStudioContactShadow(ctx, w, h);
-            ctx.drawImage(fgC, 0, 0);
+            ctx.drawImage(fgC, 0, 0, w, h);
             return true;
         }
     } catch (err) {
         console.warn('Portrait background:', err);
     }
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.filter = 'none';
-    ctx.clearRect(0, 0, w, h);
-    ctx.restore();
-    ctx.drawImage(videoEl, 0, 0, w, h);
+    drawFailSafeVideo();
     return false;
 }
 
