@@ -498,7 +498,7 @@ function loadScriptOnce(src) {
 }
 
 async function ensurePortraitMlLibs() {
-    if (typeof tf !== 'undefined' && bodySegApi()) {
+    if (typeof tf !== 'undefined' && typeof tf.ready === 'function' && bodySegApi()) {
         await tf.ready();
         return;
     }
@@ -506,7 +506,7 @@ async function ensurePortraitMlLibs() {
         portraitMlLibsPromise = (async () => {
             await loadScriptOnce('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
             await loadScriptOnce('https://cdn.jsdelivr.net/npm/@tensorflow-models/body-segmentation@1.0.2/dist/body-segmentation.min.js');
-            if (typeof tf === 'undefined' || !bodySegApi()) {
+            if (typeof tf === 'undefined' || typeof tf.ready !== 'function' || !bodySegApi()) {
                 throw new Error('Portrait ML libraries missing (blocked network or CSP?)');
             }
             try {
@@ -517,7 +517,12 @@ async function ensurePortraitMlLibs() {
             await tf.ready();
         })();
     }
-    await portraitMlLibsPromise;
+    try {
+        await portraitMlLibsPromise;
+    } catch (e) {
+        portraitMlLibsPromise = null;
+        throw e;
+    }
 }
 
 async function getPortraitSegmenter() {

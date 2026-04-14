@@ -72,11 +72,11 @@ app.use('/api/', rateLimit({
     message: { error: 'Too many requests, please try again later.' }
 }));
 
-// Content Security Policy — no unsafe-eval, tightened connect-src
+// Content Security Policy — TensorFlow.js (portrait / body-segmentation from CDN) uses eval/new Function internally
 app.use((req, res, next) => {
     res.setHeader(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https: ws://localhost:*;"
+        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https: ws://localhost:*;"
     );
     next();
 });
