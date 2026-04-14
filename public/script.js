@@ -117,12 +117,13 @@
     let _portraitBlurStageCanvas = null;
     let portraitPreviewNextAllowed = 0;
     /** Target max dimension (px) for segmentation input; adapted down on slow frames. */
-    let portraitSegMaxDim = 640;
+let portraitSegMaxDim = 720;
     /** Minimum ms between segmentation ticks (~10–15 FPS). */
     let portraitMinFrameGapMs = Math.round(1000 / 12);
     let portraitTfBackendKind = 'webgl';
     let portraitSlowFrameStreak = 0;
     let _softMaskReuse = null;
+let _prevMaskAlpha = null;
     let _warmSegCanvas = null;
     /** After camera starts, warm TF.js + segmenter in idle time so first Blur/Studio click skips multi‑second load. */
     let portraitMlWarmScheduled = false;
@@ -594,7 +595,7 @@
     }
 
     function applyPortraitPerfBaseline() {
-        portraitSegMaxDim = portraitTfBackendKind === 'webgl' ? 640 : 480;
+    portraitSegMaxDim = portraitTfBackendKind === 'webgl' ? 720 : 640;
         portraitMinFrameGapMs = portraitTfBackendKind === 'webgl' ? Math.round(1000 / 12) : Math.round(1000 / 10);
         portraitSlowFrameStreak = 0;
     }
@@ -638,6 +639,7 @@
     /** Reset adaptive portrait tuning on retake / new capture. */
     function resetPortraitMaskTemporalState() {
         applyPortraitPerfBaseline();
+    _prevMaskAlpha = null;
     }
 
     /* Soft radial “key” backdrop (brighter behind subject) + edge vignette — reads like lit seamless paper */
@@ -810,43 +812,11 @@
         }
     }
 
-    /** Edge-targeted alpha lift avoids over-hardening already-solid interiors. */
-    function boostMaskAlpha(imd, factor = 1.25) {
+/** Strengthen only the semi-transparent edge band, not the opaque interior. */
+function boostMaskAlpha(imd, factor = 1.15) {
         const d = imd.data;
         for (let i = 3; i < d.length; i += 4) {
-            if (d[i] > 0 && d[i] < 200) d[i] = Math.min(255, Math.round(d[i] * factor));
-        }
-    }
-
-    /** 1px erosion removes bright/gray halo caused by uncertain fringe pixels. */
-    function erodeMaskAlpha1px(imd, alphaThreshold = 1) {
-        const { width, height, data } = imd;
-        if (width < 3 || height < 3) return;
-        const srcA = new Uint8ClampedArray(width * height);
-        for (let p = 0, i = 3; i < data.length; i += 4, p++) srcA[p] = data[i];
-        for (let y = 1; y < height - 1; y++) {
-            for (let x = 1; x < width - 1; x++) {
-                const idx = y * width + x;
-                if (srcA[idx] <= alphaThreshold) {
-                    data[(idx << 2) + 3] = 0;
-                    continue;
-                }
-                const n0 = srcA[idx - width - 1];
-                const n1 = srcA[idx - width];
-                const n2 = srcA[idx - width + 1];
-                const n3 = srcA[idx - 1];
-                const n4 = srcA[idx + 1];
-                const n5 = srcA[idx + width - 1];
-                const n6 = srcA[idx + width];
-                const n7 = srcA[idx + width + 1];
-                if (
-                    n0 <= alphaThreshold || n1 <= alphaThreshold || n2 <= alphaThreshold ||
-                    n3 <= alphaThreshold || n4 <= alphaThreshold ||
-                    n5 <= alphaThreshold || n6 <= alphaThreshold || n7 <= alphaThreshold
-                ) {
-                    data[(idx << 2) + 3] = 0;
-                }
-            }
+        if (d[i] > 40 && d[i] < 200) d[i] = Math.min(255, Math.round(d[i] * factor));
         }
     }
 
@@ -896,10 +866,7 @@
             maskW = bin.width;
             maskH = bin.height;
             coveragePercent = portraitMaskCoveragePercent(bin, PORTRAIT_MASK_ALPHA_SAMPLE);
-            if (coveragePercent > 10) {
-                erodeMaskAlpha1px(bin);
-            }
-            boostMaskAlpha(bin, 1.25);
+            boostMaskAlpha(bin, 1.15);
             coveragePercent = portraitMaskCoveragePercent(bin, PORTRAIT_MASK_ALPHA_SAMPLE);
             if (portraitMaskIsCompletelyEmpty(bin)) {
                 return false;
@@ -924,10 +891,7 @@
         const commitSoftToMC = (soft) => {
             applyStudioMaskNoiseFloor(soft);
             coveragePercent = portraitMaskCoveragePercent(soft, PORTRAIT_MASK_ALPHA_SAMPLE);
-            if (coveragePercent > 10) {
-                erodeMaskAlpha1px(soft);
-            }
-            boostMaskAlpha(soft, 1.25);
+            boostMaskAlpha(soft, 1.15);
             coveragePercent = portraitMaskCoveragePercent(soft, PORTRAIT_MASK_ALPHA_SAMPLE);
             if (portraitMaskIsCompletelyEmpty(soft)) {
                 return false;
@@ -1013,8 +977,8 @@
         void (async () => {
             try {
                 const maxSegDim = quality === 'capture'
-                    ? 768
-                    : 640;
+                    ? 896
+                    : 720;
                 const { sw, sh } = computePortraitSegDims(w, h, maxSegDim);
                 if (!_portraitSegCanvas) _portraitSegCanvas = document.createElement('canvas');
                 if (!copyVideoFrameToCanvas(videoEl, _portraitSegCanvas, sw, sh)) return;
@@ -1052,11 +1016,38 @@
                 lm.clearRect(0, 0, w, h);
                 lm.imageSmoothingEnabled = true;
                 lm.imageSmoothingQuality = 'low';
-                lm.filter = quality === 'capture' ? 'blur(1.2px)' : 'blur(0.9px)';
+                lm.filter = 'blur(0.8px)';
                 lm.drawImage(_solidMaskCanvas, 0, 0, maskW, maskH, 0, 0, w, h);
+                lm.filter = 'blur(0.4px)';
+                lm.drawImage(lm.canvas, 0, 0);
                 lm.filter = 'none';
                 const finalMaskIm = lm.getImageData(0, 0, w, h);
-                boostMaskAlpha(finalMaskIm, 1.25);
+                const d = finalMaskIm.data;
+                if (_prevMaskAlpha && _prevMaskAlpha.length === d.length) {
+                    for (let i = 3; i < d.length; i += 4) {
+                        let a = d[i];
+                        const prev = _prevMaskAlpha[i];
+                        const diff = Math.abs(a - prev);
+                        if (diff > 80) {
+                            a = prev + (a - prev) * 0.5;
+                        }
+                        a = (a * 0.75) + (prev * 0.25);
+                        const na = a / 255;
+                        if (na > 0 && na < 1) {
+                            a = Math.pow(na, 0.85) * 255;
+                        }
+                        d[i] = Math.max(0, Math.min(255, Math.round(a)));
+                    }
+                } else {
+                    for (let i = 3; i < d.length; i += 4) {
+                        const na = d[i] / 255;
+                        if (na > 0 && na < 1) {
+                            d[i] = Math.max(0, Math.min(255, Math.round(Math.pow(na, 0.85) * 255)));
+                        }
+                    }
+                }
+                boostMaskAlpha(finalMaskIm, 1.15);
+                _prevMaskAlpha = new Uint8ClampedArray(d);
                 lm.putImageData(finalMaskIm, 0, 0);
 
                 if (portraitVerboseMaskLog()) {
