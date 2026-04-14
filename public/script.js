@@ -111,6 +111,8 @@ let _portraitSegCanvas = null;
 let _solidMaskBlurredCanvas = null;
 /** Feathered mask scaled to full video dimensions (single coordinate system for compositing). */
 let _portraitMaskFullCanvas = null;
+let _portraitLastValidMaskCanvas = null;
+let portraitSegmentationInFlight = false;
 /** Single blit to preview canvas reduces visible tearing vs painting bokeh directly on the live canvas. */
 let _portraitBlurStageCanvas = null;
 let portraitPreviewNextAllowed = 0;
@@ -953,6 +955,70 @@ async function buildPortraitFeatheredMask(people, API, quality, mC, mBlur) {
     return { ok: true, maskW, maskH, coveragePercent };
 }
 
+function getPortraitLastValidMaskForSize(w, h) {
+    if (!_portraitLastValidMaskCanvas) return null;
+    if (_portraitLastValidMaskCanvas.width !== w || _portraitLastValidMaskCanvas.height !== h) return null;
+    return _portraitLastValidMaskCanvas;
+}
+
+function schedulePortraitMaskUpdate(videoEl, quality, w, h) {
+    if (portraitSegmentationInFlight) return;
+    portraitSegmentationInFlight = true;
+    void (async () => {
+        try {
+            const maxSegDim = quality === 'capture'
+                ? Math.min(640, Math.max(portraitSegMaxDim, 480))
+                : portraitSegMaxDim;
+            const { sw, sh } = computePortraitSegDims(w, h, maxSegDim);
+            if (!_portraitSegCanvas) _portraitSegCanvas = document.createElement('canvas');
+            if (!copyVideoFrameToCanvas(videoEl, _portraitSegCanvas, sw, sh)) return;
+            const API = bodySegApi();
+            if (!API) return;
+            const segmenter = await getPortraitSegmenter();
+            const people = await segmenter.segmentPeople(_portraitSegCanvas);
+
+            if (portraitDebugMaskEnabled() || portraitVerboseMaskLog()) {
+                const plist = Array.isArray(people) ? people : (people ? [people] : []);
+                const seg0 = plist[0];
+                console.log('Segmentation result:', {
+                    people,
+                    firstKeys: seg0 ? Object.keys(seg0) : [],
+                    hasMask: !!(seg0 && seg0.mask),
+                });
+                if (typeof tf !== 'undefined' && typeof tf.getBackend === 'function') {
+                    console.log('TF Backend:', tf.getBackend());
+                }
+            }
+
+            if (!_solidMaskCanvas) _solidMaskCanvas = document.createElement('canvas');
+            if (!_solidMaskBlurredCanvas) _solidMaskBlurredCanvas = document.createElement('canvas');
+            const maskRes = await buildPortraitFeatheredMask(people, API, quality, _solidMaskCanvas, _solidMaskBlurredCanvas);
+            if (!maskRes.ok) return;
+            const { maskW, maskH, coveragePercent } = maskRes;
+
+            if (!_portraitLastValidMaskCanvas) _portraitLastValidMaskCanvas = document.createElement('canvas');
+            ensureCanvasSize(_portraitLastValidMaskCanvas, w, h);
+            const lm = _portraitLastValidMaskCanvas.getContext('2d', { alpha: true });
+            lm.setTransform(1, 0, 0, 1, 0, 0);
+            lm.globalAlpha = 1;
+            lm.globalCompositeOperation = 'source-over';
+            lm.filter = 'none';
+            lm.clearRect(0, 0, w, h);
+            lm.imageSmoothingEnabled = true;
+            lm.imageSmoothingQuality = 'low';
+            lm.drawImage(_solidMaskBlurredCanvas, 0, 0, maskW, maskH, 0, 0, w, h);
+
+            if (portraitVerboseMaskLog()) {
+                console.log('Mask coverage:', coveragePercent);
+            }
+        } catch (err) {
+            console.warn('Portrait mask update:', err);
+        } finally {
+            portraitSegmentationInFlight = false;
+        }
+    })();
+}
+
 /**
  * @param {'preview'|'capture'} [quality] — capture uses slightly stronger mask feather for still photos.
  * Segmentation always runs on a downscaled copy; output is composited at full display resolution.
@@ -975,22 +1041,6 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
         c.filter = 'none';
     };
 
-    const framePipeline = { background: false, foreground: false, composite: false };
-    const finishPipeline = () => {
-        console.log('Frame pipeline:', framePipeline);
-        if (!framePipeline.background || !framePipeline.foreground || !framePipeline.composite) {
-            console.error('Frame pipeline contract violated', framePipeline);
-            return false;
-        }
-        return true;
-    };
-    const drawFailSafeVideo = () => {
-        resetCtx2d(ctx);
-        ctx.clearRect(0, 0, w, h);
-        resetCtx2d(ctx);
-        ctx.drawImage(videoEl, 0, 0, w, h);
-    };
-
     // STEP 0: reset state and clear
     resetCtx2d(ctx);
     ctx.clearRect(0, 0, w, h);
@@ -1002,199 +1052,72 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
     resetCtx2d(fgX);
     fgX.clearRect(0, 0, w, h);
 
-    const drawWeakMaskDevStripe = (coveragePercent) => {
-        if (
-            portraitVerboseMaskLog()
-            && coveragePercent > 0
-            && coveragePercent < PORTRAIT_MASK_STRONG_COVERAGE_PCT
-        ) {
-            console.warn('Portrait: weak mask coverage (still compositing)', coveragePercent);
-            resetCtx2d(ctx);
-            ctx.fillStyle = 'rgba(255, 214, 0, 0.82)';
-            ctx.fillRect(0, h - 8, w, 8);
-        }
-    };
-
-    const checkBackgroundHealth = () => {
-        try {
-            const pixel = ctx.getImageData(0, 0, 1, 1).data;
-            if (pixel[0] === 0 && pixel[1] === 0 && pixel[2] === 0) {
-                console.warn('Black background detected -> BG draw failed');
-            }
-        } catch (_) { /* ignore tainted read */ }
-    };
-
-    const compositeForeground = (coveragePercent = 0) => {
-        resetCtx2d(ctx);
-        if (ctx.globalCompositeOperation === 'destination-in' || ctx.globalCompositeOperation === 'destination-out') {
-            console.error('Main canvas has forbidden composite op before foreground compose');
-        }
-        ctx.drawImage(fgC, 0, 0, w, h);
-        framePipeline.composite = true;
-        drawWeakMaskDevStripe(coveragePercent);
-    };
-
-    if (mode === 'none' || !mode) {
-        // STEP 1: draw background
+    const drawVideoFallback = () => {
         resetCtx2d(ctx);
         ctx.drawImage(videoEl, 0, 0, w, h);
-        framePipeline.background = true;
-        checkBackgroundHealth();
+    };
 
-        // STEP 2: build foreground offscreen (empty for natural mode)
-        resetCtx2d(fgX);
-        fgX.clearRect(0, 0, w, h);
-        framePipeline.foreground = true;
-
-        // STEP 3: composite
-        compositeForeground();
-        if (!finishPipeline()) return false;
-        return false;
+    // STEP 1: background is always drawn, no conditional skip path.
+    if (portraitHardTestEnabled()) {
+        resetCtx2d(ctx);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+    } else if (mode === 'blur') {
+        if (!_portraitBlurStageCanvas) _portraitBlurStageCanvas = document.createElement('canvas');
+        ensureCanvasSize(_portraitBlurStageCanvas, w, h);
+        const bctx = _portraitBlurStageCanvas.getContext('2d', { alpha: false });
+        resetCtx2d(bctx);
+        bctx.clearRect(0, 0, w, h);
+        bctx.imageSmoothingEnabled = true;
+        bctx.imageSmoothingQuality = 'low';
+        const fullBlurPx = quality === 'capture' ? 12 : 11;
+        bctx.filter = `blur(${fullBlurPx}px)`;
+        bctx.drawImage(videoEl, 0, 0, w, h);
+        bctx.filter = 'none';
+        resetCtx2d(ctx);
+        ctx.drawImage(_portraitBlurStageCanvas, 0, 0, w, h);
+    } else if (mode === 'solid') {
+        resetCtx2d(ctx);
+        fillStudioBackdropGradient(ctx, w, h);
+        drawStudioContactShadow(ctx, w, h);
+    } else {
+        drawVideoFallback();
     }
 
-    const maxSegDim = quality === 'capture'
-        ? Math.min(640, Math.max(portraitSegMaxDim, 480))
-        : portraitSegMaxDim;
-    const { sw, sh } = computePortraitSegDims(w, h, maxSegDim);
-    if (!_portraitSegCanvas) _portraitSegCanvas = document.createElement('canvas');
-    if (!copyVideoFrameToCanvas(videoEl, _portraitSegCanvas, sw, sh)) {
-        drawFailSafeVideo();
-        console.error('Frame pipeline aborted: segmentation source frame unavailable');
-        return false;
+    // Segmentation updates cached mask asynchronously; render never blocks on it.
+    if (mode === 'blur' || mode === 'solid') {
+        schedulePortraitMaskUpdate(videoEl, quality, w, h);
     }
-    const segCanvas = _portraitSegCanvas;
 
-    try {
-        const API = bodySegApi();
-        if (!API) {
-            drawFailSafeVideo();
-            console.error('Frame pipeline aborted: bodySeg API unavailable');
-            return false;
-        }
-        const segmenter = await getPortraitSegmenter();
-        const people = await segmenter.segmentPeople(segCanvas);
-
-        const plist = Array.isArray(people) ? people : (people ? [people] : []);
-        const seg0 = plist[0];
-        if (portraitDebugMaskEnabled() || portraitVerboseMaskLog()) {
-            console.log('Segmentation result:', {
-                people,
-                firstKeys: seg0 ? Object.keys(seg0) : [],
-                hasMask: !!(seg0 && seg0.mask),
-            });
-            if (typeof tf !== 'undefined' && typeof tf.getBackend === 'function') {
-                console.log('TF Backend:', tf.getBackend());
-            }
-        }
-
-        if (!_solidMaskCanvas) _solidMaskCanvas = document.createElement('canvas');
-        if (!_solidMaskBlurredCanvas) _solidMaskBlurredCanvas = document.createElement('canvas');
-        const mC = _solidMaskCanvas;
-        const mBlur = _solidMaskBlurredCanvas;
-
-        const maskRes = await buildPortraitFeatheredMask(people, API, quality, mC, mBlur);
-        if (!maskRes.ok) {
-            console.warn(
-                'Portrait: fail-safe — mask has 0% coverage (segmentation / model / backend). Background effects skipped.',
-                { coveragePercent: maskRes.coveragePercent }
-            );
-            drawFailSafeVideo();
-            return false;
-        }
-        const { maskW, maskH, coveragePercent } = maskRes;
-
-        if (!_portraitMaskFullCanvas) _portraitMaskFullCanvas = document.createElement('canvas');
-        ensureCanvasSize(_portraitMaskFullCanvas, w, h);
-        const mf = _portraitMaskFullCanvas.getContext('2d', { alpha: true });
-        resetCtx2d(mf);
-        mf.clearRect(0, 0, w, h);
-        mf.imageSmoothingEnabled = true;
-        mf.imageSmoothingQuality = 'low';
-        mf.drawImage(mBlur, 0, 0, maskW, maskH, 0, 0, w, h);
-
-        if (destCanvas === _portraitMaskFullCanvas || destCanvas === mC || destCanvas === mBlur) {
-            console.error('Main canvas was replaced by a mask canvas (invalid pipeline setup)');
-        }
-
-        if (portraitDebugMaskEnabled()) {
-            const maskImd = mf.getImageData(0, 0, w, h);
-            resetCtx2d(ctx);
-            ctx.clearRect(0, 0, w, h);
-            resetCtx2d(ctx);
-            ctx.putImageData(maskImd, 0, 0);
-            console.log('Mask coverage:', coveragePercent);
-            framePipeline.background = true;
-            framePipeline.foreground = true;
-            framePipeline.composite = true;
-            finishPipeline();
-            return true;
-        }
-
-        if (portraitVerboseMaskLog()) {
-            console.log('Mask coverage:', coveragePercent);
-        }
-
-        // STEP 1: draw background (non-skippable)
-        if (portraitHardTestEnabled()) {
-            resetCtx2d(ctx);
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, w, h);
-            framePipeline.background = true;
-            if (portraitVerboseMaskLog()) {
-                console.log('Portrait hard-test: white fill + masked subject (compositing check)');
-            }
-        } else if (mode === 'blur') {
-            if (!_portraitBlurStageCanvas) _portraitBlurStageCanvas = document.createElement('canvas');
-            ensureCanvasSize(_portraitBlurStageCanvas, w, h);
-            const bctx = _portraitBlurStageCanvas.getContext('2d', { alpha: false });
-            resetCtx2d(bctx);
-            bctx.clearRect(0, 0, w, h);
-            bctx.imageSmoothingEnabled = true;
-            bctx.imageSmoothingQuality = 'low';
-            const fullBlurPx = quality === 'capture' ? 12 : 11;
-            bctx.filter = `blur(${fullBlurPx}px)`;
-            bctx.drawImage(videoEl, 0, 0, w, h);
-            bctx.filter = 'none';
-            resetCtx2d(ctx);
-            ctx.drawImage(_portraitBlurStageCanvas, 0, 0, w, h);
-            framePipeline.background = true;
-        } else if (mode === 'solid') {
-            resetCtx2d(ctx);
-            fillStudioBackdropGradient(ctx, w, h);
-            drawStudioContactShadow(ctx, w, h);
-            framePipeline.background = true;
-        }
-
-        if (!framePipeline.background) {
-            console.error('Background NOT drawn');
-            drawFailSafeVideo();
-            finishPipeline();
-            return false;
-        }
-        checkBackgroundHealth();
-
-        // STEP 2: build foreground offscreen (strict isolation)
+    // STEP 2: foreground from last valid mask only, otherwise full video fallback.
+    const lastMask = getPortraitLastValidMaskForSize(w, h);
+    if (lastMask) {
         resetCtx2d(fgX);
         fgX.clearRect(0, 0, w, h);
         fgX.globalCompositeOperation = 'source-over';
         fgX.drawImage(videoEl, 0, 0, w, h);
         fgX.globalCompositeOperation = 'destination-in';
-        fgX.drawImage(_portraitMaskFullCanvas, 0, 0, w, h);
+        fgX.drawImage(lastMask, 0, 0, w, h);
         fgX.globalCompositeOperation = 'source-over';
-        framePipeline.foreground = true;
-
-        // STEP 3: composite foreground on top
-        compositeForeground(coveragePercent);
-        if (!finishPipeline()) {
-            drawFailSafeVideo();
-            return false;
-        }
-        return true;
-    } catch (err) {
-        console.warn('Portrait background:', err);
+        resetCtx2d(ctx);
+        ctx.drawImage(fgC, 0, 0, w, h);
+    } else {
+        resetCtx2d(ctx);
+        drawVideoFallback();
     }
-    drawFailSafeVideo();
-    return false;
+
+    if (portraitDebugMaskEnabled() && lastMask) {
+        try {
+            const lctx = lastMask.getContext('2d', { alpha: true });
+            const maskImd = lctx.getImageData(0, 0, w, h);
+            resetCtx2d(ctx);
+            ctx.clearRect(0, 0, w, h);
+            resetCtx2d(ctx);
+            ctx.putImageData(maskImd, 0, 0);
+        } catch (_) { /* ignore mask debug read issues */ }
+    }
+
+    return mode !== 'none';
 }
 
 function cancelPortraitPreviewLoop() {
