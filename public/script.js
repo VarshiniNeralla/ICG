@@ -117,7 +117,7 @@ let portraitSegmentationInFlight = false;
 let _portraitBlurStageCanvas = null;
 let portraitPreviewNextAllowed = 0;
 /** Target max dimension (px) for segmentation input; adapted down on slow frames. */
-let portraitSegMaxDim = 480;
+let portraitSegMaxDim = 640;
 /** Minimum ms between segmentation ticks (~10–15 FPS). */
 let portraitMinFrameGapMs = Math.round(1000 / 12);
 let portraitTfBackendKind = 'webgl';
@@ -594,7 +594,7 @@ function synchronouslyPaintRawPreviewOnEffectCanvas() {
 }
 
 function applyPortraitPerfBaseline() {
-    portraitSegMaxDim = portraitTfBackendKind === 'webgl' ? 480 : 320;
+    portraitSegMaxDim = portraitTfBackendKind === 'webgl' ? 640 : 480;
     portraitMinFrameGapMs = portraitTfBackendKind === 'webgl' ? Math.round(1000 / 12) : Math.round(1000 / 10);
     portraitSlowFrameStreak = 0;
 }
@@ -719,11 +719,10 @@ function applyStudioMaskNoiseFloor(imd) {
 
 /**
  * Model mask semantics (body-segmentation): R = part id, G/B = 0, A = foreground probability 0–255.
- * Uses strict confidence gating to avoid washed low-alpha edges.
+ * Keeps a softer confidence ramp to preserve edge detail and hair strands.
  */
 function softMaskImageDataFromModelMask(rawIm, quality) {
-    const HARD_EDGE_THRESHOLD = quality === 'capture' ? 140 : 150;
-    const SOFT_LO = 110;
+    const SOFT_LO = 100;
     const SOFT_HI = 180;
     const mw = rawIm.width;
     const mh = rawIm.height;
@@ -739,16 +738,7 @@ function softMaskImageDataFromModelMask(rawIm, quality) {
         } else if (rawA > SOFT_HI) {
             a = 255;
         } else {
-            const t = (rawA - SOFT_LO) / (SOFT_HI - SOFT_LO);
-            a = Math.round(255 * t);
-        }
-        // Hair-preservation window avoids deleting thin strands entirely.
-        if (a > 80 && a < 140) {
-            a = 180;
-        }
-        // Final hard gate keeps confidence edges crisp.
-        if (rawA < HARD_EDGE_THRESHOLD) {
-            a = 0;
+            a = rawA;
         }
         od[i] = 255;
         od[i + 1] = 255;
@@ -820,11 +810,11 @@ function portraitMaskAlphaBoostVisualization(imd) {
     }
 }
 
-/** Global edge-opacity lift keeps cutout subject opaque near boundaries. */
+/** Edge-targeted alpha lift avoids over-hardening already-solid interiors. */
 function boostMaskAlpha(imd, factor = 1.25) {
     const d = imd.data;
     for (let i = 3; i < d.length; i += 4) {
-        if (d[i] > 0) d[i] = Math.min(255, Math.round(d[i] * factor));
+        if (d[i] > 0 && d[i] < 200) d[i] = Math.min(255, Math.round(d[i] * factor));
     }
 }
 
@@ -905,7 +895,10 @@ async function buildPortraitFeatheredMask(people, API, quality, mC, mBlur) {
     const commitBinaryToMC = (bin) => {
         maskW = bin.width;
         maskH = bin.height;
-        erodeMaskAlpha1px(bin);
+        coveragePercent = portraitMaskCoveragePercent(bin, PORTRAIT_MASK_ALPHA_SAMPLE);
+        if (coveragePercent > 10) {
+            erodeMaskAlpha1px(bin);
+        }
         boostMaskAlpha(bin, 1.25);
         coveragePercent = portraitMaskCoveragePercent(bin, PORTRAIT_MASK_ALPHA_SAMPLE);
         if (portraitMaskIsCompletelyEmpty(bin)) {
@@ -930,7 +923,10 @@ async function buildPortraitFeatheredMask(people, API, quality, mC, mBlur) {
 
     const commitSoftToMC = (soft) => {
         applyStudioMaskNoiseFloor(soft);
-        erodeMaskAlpha1px(soft);
+        coveragePercent = portraitMaskCoveragePercent(soft, PORTRAIT_MASK_ALPHA_SAMPLE);
+        if (coveragePercent > 10) {
+            erodeMaskAlpha1px(soft);
+        }
         boostMaskAlpha(soft, 1.25);
         coveragePercent = portraitMaskCoveragePercent(soft, PORTRAIT_MASK_ALPHA_SAMPLE);
         if (portraitMaskIsCompletelyEmpty(soft)) {
@@ -1017,8 +1013,8 @@ function schedulePortraitMaskUpdate(videoEl, quality, w, h) {
     void (async () => {
         try {
             const maxSegDim = quality === 'capture'
-                ? Math.min(640, Math.max(portraitSegMaxDim, 480))
-                : portraitSegMaxDim;
+                ? 768
+                : 640;
             const { sw, sh } = computePortraitSegDims(w, h, maxSegDim);
             if (!_portraitSegCanvas) _portraitSegCanvas = document.createElement('canvas');
             if (!copyVideoFrameToCanvas(videoEl, _portraitSegCanvas, sw, sh)) return;
@@ -1056,7 +1052,7 @@ function schedulePortraitMaskUpdate(videoEl, quality, w, h) {
             lm.clearRect(0, 0, w, h);
             lm.imageSmoothingEnabled = true;
             lm.imageSmoothingQuality = 'low';
-            lm.filter = 'blur(0.6px)';
+            lm.filter = quality === 'capture' ? 'blur(1.2px)' : 'blur(0.9px)';
             lm.drawImage(_solidMaskCanvas, 0, 0, maskW, maskH, 0, 0, w, h);
             lm.filter = 'none';
             const finalMaskIm = lm.getImageData(0, 0, w, h);
