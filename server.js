@@ -4,20 +4,34 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 const cloudinary = require('cloudinary').v2;
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
 const app = express();
-require('dotenv').config();
+const isProduction = process.env.NODE_ENV === 'production';
+if (!isProduction && fs.existsSync(path.join(__dirname, '.env'))) {
+    require('dotenv').config();
+    console.log('[Startup] Loaded environment variables from local .env');
+} else if (!isProduction) {
+    console.warn('[Startup] .env not found locally. Using current process environment variables only.');
+}
 
-const PORT = process.env.PORT || 5000;
-const DB_URI = process.env.MONGO_URI;
-
-if (!DB_URI) {
-    console.error("CRITICAL ERROR: MONGO_URI is not defined in the environment variables.");
+const PORT = process.env.PORT || 10000;
+const HOST = '0.0.0.0';
+const REQUIRED_ENV_VARS = [
+    'MONGO_URI',
+    'CLOUDINARY_CLOUD_NAME',
+    'CLOUDINARY_API_KEY',
+    'CLOUDINARY_API_SECRET'
+];
+const missingEnvVars = REQUIRED_ENV_VARS.filter((name) => !process.env[name] || !String(process.env[name]).trim());
+if (missingEnvVars.length > 0) {
+    console.error(`[Startup] Missing required environment variables: ${missingEnvVars.join(', ')}`);
     process.exit(1);
 }
+const DB_URI = process.env.MONGO_URI;
 
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -25,23 +39,13 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-const hasCloudinaryCreds = Boolean(
-    process.env.CLOUDINARY_CLOUD_NAME &&
-    process.env.CLOUDINARY_API_KEY &&
-    process.env.CLOUDINARY_API_SECRET
-);
-
-if (!hasCloudinaryCreds) {
-    console.warn('WARNING: Cloudinary credentials are missing. Uploads may fail.');
-} else {
-    cloudinary.api.ping()
-        .then(() => {
-            console.log('Successfully connected to Cloudinary');
-        })
-        .catch((err) => {
-            console.error('WARNING: Could not connect to Cloudinary:', err.message);
-        });
-}
+cloudinary.api.ping()
+    .then(() => {
+        console.log('Successfully connected to Cloudinary');
+    })
+    .catch((err) => {
+        console.error('WARNING: Could not connect to Cloudinary:', err.message);
+    });
 
 // ── Security Middleware ──────────────────────────────────────────────────────
 app.set('trust proxy', 1);
@@ -148,6 +152,7 @@ app.get('/admin.html', (req, res) => {
 });
 
 app.get('/favicon.ico', (req, res) => res.status(204).end());
+app.get('/health', (req, res) => res.status(200).send('OK'));
 
 // ── Global Process Crash Guards ──────────────────────────────────────────────
 process.on('unhandledRejection', (reason) => {
@@ -165,12 +170,15 @@ mongoose.connect(DB_URI)
         console.log('Successfully connected to MongoDB Atlas');
     })
     .catch(err => {
-        console.error('WARNING: Could not connect to MongoDB Atlas:', err.message);
-        console.error('Server will continue running. Database operations will fail gracefully.');
+        console.error('ERROR: Could not connect to MongoDB Atlas:', err.message);
+        process.exit(1);
     });
 
 // Start server independently of DB connection
-const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const server = app.listen(PORT, HOST, () => {
+    console.log(`[Startup] Server listening on ${HOST}:${PORT}`);
+    console.log(`[Startup] NODE_ENV=${process.env.NODE_ENV || 'development'}`);
+});
 
 // ── Graceful Shutdown ───────────────────────────────────────────────────────
 const shutdown = (signal) => {
