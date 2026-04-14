@@ -812,14 +812,6 @@ let _prevMaskAlpha = null;
         }
     }
 
-/** Strengthen only the semi-transparent edge band, not the opaque interior. */
-function boostMaskAlpha(imd, factor = 1.15) {
-        const d = imd.data;
-        for (let i = 3; i < d.length; i += 4) {
-        if (d[i] > 40 && d[i] < 200) d[i] = Math.min(255, Math.round(d[i] * factor));
-        }
-    }
-
     /** `?portraitDebugMask=1` or `window.__ICG_PORTRAIT_DEBUG_MASK = true` — draws the feathered mask full-frame. */
     function portraitDebugMaskEnabled() {
         if (typeof window !== 'undefined' && window.__ICG_PORTRAIT_DEBUG_MASK) return true;
@@ -866,7 +858,6 @@ function boostMaskAlpha(imd, factor = 1.15) {
             maskW = bin.width;
             maskH = bin.height;
             coveragePercent = portraitMaskCoveragePercent(bin, PORTRAIT_MASK_ALPHA_SAMPLE);
-            boostMaskAlpha(bin, 1.15);
             coveragePercent = portraitMaskCoveragePercent(bin, PORTRAIT_MASK_ALPHA_SAMPLE);
             if (portraitMaskIsCompletelyEmpty(bin)) {
                 return false;
@@ -891,7 +882,6 @@ function boostMaskAlpha(imd, factor = 1.15) {
         const commitSoftToMC = (soft) => {
             applyStudioMaskNoiseFloor(soft);
             coveragePercent = portraitMaskCoveragePercent(soft, PORTRAIT_MASK_ALPHA_SAMPLE);
-            boostMaskAlpha(soft, 1.15);
             coveragePercent = portraitMaskCoveragePercent(soft, PORTRAIT_MASK_ALPHA_SAMPLE);
             if (portraitMaskIsCompletelyEmpty(soft)) {
                 return false;
@@ -1016,37 +1006,16 @@ function boostMaskAlpha(imd, factor = 1.15) {
                 lm.clearRect(0, 0, w, h);
                 lm.imageSmoothingEnabled = true;
                 lm.imageSmoothingQuality = 'low';
-                lm.filter = 'blur(0.8px)';
+                lm.filter = quality === 'capture' ? 'blur(1.0px)' : 'blur(0.7px)';
                 lm.drawImage(_solidMaskCanvas, 0, 0, maskW, maskH, 0, 0, w, h);
-                lm.filter = 'blur(0.4px)';
-                lm.drawImage(lm.canvas, 0, 0);
                 lm.filter = 'none';
                 const finalMaskIm = lm.getImageData(0, 0, w, h);
                 const d = finalMaskIm.data;
                 if (_prevMaskAlpha && _prevMaskAlpha.length === d.length) {
                     for (let i = 3; i < d.length; i += 4) {
-                        let a = d[i];
-                        const prev = _prevMaskAlpha[i];
-                        const diff = Math.abs(a - prev);
-                        if (diff > 80) {
-                            a = prev + (a - prev) * 0.5;
-                        }
-                        a = (a * 0.75) + (prev * 0.25);
-                        const na = a / 255;
-                        if (na > 0 && na < 1) {
-                            a = Math.pow(na, 0.85) * 255;
-                        }
-                        d[i] = Math.max(0, Math.min(255, Math.round(a)));
-                    }
-                } else {
-                    for (let i = 3; i < d.length; i += 4) {
-                        const na = d[i] / 255;
-                        if (na > 0 && na < 1) {
-                            d[i] = Math.max(0, Math.min(255, Math.round(Math.pow(na, 0.85) * 255)));
-                        }
+                        d[i] = Math.round((d[i] * 0.85) + (_prevMaskAlpha[i] * 0.15));
                     }
                 }
-                boostMaskAlpha(finalMaskIm, 1.15);
                 _prevMaskAlpha = new Uint8ClampedArray(d);
                 lm.putImageData(finalMaskIm, 0, 0);
 
