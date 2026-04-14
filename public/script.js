@@ -117,13 +117,13 @@
     let _portraitBlurStageCanvas = null;
     let portraitPreviewNextAllowed = 0;
     /** Target max dimension (px) for segmentation input; adapted down on slow frames. */
-let portraitSegMaxDim = 720;
+    let portraitSegMaxDim = 896;
     /** Minimum ms between segmentation ticks (~10–15 FPS). */
     let portraitMinFrameGapMs = Math.round(1000 / 12);
     let portraitTfBackendKind = 'webgl';
     let portraitSlowFrameStreak = 0;
     let _softMaskReuse = null;
-let _prevMaskAlpha = null;
+    let _prevMaskAlpha = null;
     let _warmSegCanvas = null;
     /** After camera starts, warm TF.js + segmenter in idle time so first Blur/Studio click skips multi‑second load. */
     let portraitMlWarmScheduled = false;
@@ -595,7 +595,7 @@ let _prevMaskAlpha = null;
     }
 
     function applyPortraitPerfBaseline() {
-    portraitSegMaxDim = portraitTfBackendKind === 'webgl' ? 720 : 640;
+        portraitSegMaxDim = portraitTfBackendKind === 'webgl' ? 896 : 720;
         portraitMinFrameGapMs = portraitTfBackendKind === 'webgl' ? Math.round(1000 / 12) : Math.round(1000 / 10);
         portraitSlowFrameStreak = 0;
     }
@@ -711,7 +711,7 @@ let _prevMaskAlpha = null;
     /** Drop very low alpha (sensor / model speckle) before GPU feather. */
     function applyStudioMaskNoiseFloor(imd) {
         const d = imd.data;
-        const floor = Math.round(0.3 * 255);
+        const floor = Math.round(0.15 * 255);
         for (let i = 0; i < d.length; i += 4) {
             if (d[i + 3] < floor) {
                 d[i + 3] = 0;
@@ -724,8 +724,8 @@ let _prevMaskAlpha = null;
      * Keeps a softer confidence ramp to preserve edge detail and hair strands.
      */
     function softMaskImageDataFromModelMask(rawIm, quality) {
-        const SOFT_LO = 100;
-        const SOFT_HI = 180;
+        const SOFT_LO = 80;
+        const SOFT_HI = 200;
         const mw = rawIm.width;
         const mh = rawIm.height;
         if (!_softMaskReuse || _softMaskReuse.width !== mw || _softMaskReuse.height !== mh) {
@@ -967,8 +967,8 @@ let _prevMaskAlpha = null;
         void (async () => {
             try {
                 const maxSegDim = quality === 'capture'
-                    ? 896
-                    : 720;
+                    ? 1024
+                    : 896;
                 const { sw, sh } = computePortraitSegDims(w, h, maxSegDim);
                 if (!_portraitSegCanvas) _portraitSegCanvas = document.createElement('canvas');
                 if (!copyVideoFrameToCanvas(videoEl, _portraitSegCanvas, sw, sh)) return;
@@ -1006,14 +1006,15 @@ let _prevMaskAlpha = null;
                 lm.clearRect(0, 0, w, h);
                 lm.imageSmoothingEnabled = true;
                 lm.imageSmoothingQuality = 'low';
-                lm.filter = quality === 'capture' ? 'blur(1.0px)' : 'blur(0.7px)';
                 lm.drawImage(_solidMaskCanvas, 0, 0, maskW, maskH, 0, 0, w, h);
+                lm.filter = 'blur(0.8px)';
+                lm.drawImage(_portraitLastValidMaskCanvas, 0, 0);
                 lm.filter = 'none';
                 const finalMaskIm = lm.getImageData(0, 0, w, h);
                 const d = finalMaskIm.data;
                 if (_prevMaskAlpha && _prevMaskAlpha.length === d.length) {
                     for (let i = 3; i < d.length; i += 4) {
-                        d[i] = Math.round((d[i] * 0.85) + (_prevMaskAlpha[i] * 0.15));
+                        d[i] = Math.round((d[i] * 0.9) + (_prevMaskAlpha[i] * 0.1));
                     }
                 }
                 _prevMaskAlpha = new Uint8ClampedArray(d);
