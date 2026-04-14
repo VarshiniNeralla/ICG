@@ -1041,23 +1041,19 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
         c.filter = 'none';
     };
 
-    // STEP 0: reset state and clear
+    // STEP 0: reset state — only clear at frame start (never after background).
     resetCtx2d(ctx);
     ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
 
     if (!_solidFgCanvas) _solidFgCanvas = document.createElement('canvas');
     const fgC = _solidFgCanvas;
     ensureCanvasSize(fgC, w, h);
-    const fgX = fgC.getContext('2d', { alpha: false });
-    resetCtx2d(fgX);
-    fgX.clearRect(0, 0, w, h);
+    /** Alpha must be true so destination-in leaves real transparency; main canvas stays alpha:false. */
+    const fgX = fgC.getContext('2d', { alpha: true });
 
-    const drawVideoFallback = () => {
-        resetCtx2d(ctx);
-        ctx.drawImage(videoEl, 0, 0, w, h);
-    };
-
-    // STEP 1: background is always drawn, no conditional skip path.
+    // STEP 1: background (always drawn on top of safety fill; no clear after this).
     if (portraitHardTestEnabled()) {
         resetCtx2d(ctx);
         ctx.fillStyle = '#ffffff';
@@ -1081,17 +1077,18 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
         fillStudioBackdropGradient(ctx, w, h);
         drawStudioContactShadow(ctx, w, h);
     } else {
-        drawVideoFallback();
+        resetCtx2d(ctx);
+        ctx.drawImage(videoEl, 0, 0, w, h);
     }
 
-    // Segmentation updates cached mask asynchronously; render never blocks on it.
     if (mode === 'blur' || mode === 'solid') {
         schedulePortraitMaskUpdate(videoEl, quality, w, h);
     }
 
-    // STEP 2: foreground from last valid mask only, otherwise full video fallback.
     const lastMask = getPortraitLastValidMaskForSize(w, h);
-    if (lastMask) {
+    const usePortraitFg = (mode === 'blur' || mode === 'solid') && lastMask;
+
+    if (usePortraitFg) {
         resetCtx2d(fgX);
         fgX.clearRect(0, 0, w, h);
         fgX.globalCompositeOperation = 'source-over';
@@ -1100,21 +1097,20 @@ async function renderPortraitFrameToCanvas(destCanvas, videoEl, mode, quality = 
         fgX.drawImage(lastMask, 0, 0, w, h);
         fgX.globalCompositeOperation = 'source-over';
         resetCtx2d(ctx);
+        ctx.globalCompositeOperation = 'source-over';
         ctx.drawImage(fgC, 0, 0, w, h);
-    } else {
+    } else if (mode === 'blur' || mode === 'solid') {
         resetCtx2d(ctx);
-        drawVideoFallback();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.drawImage(videoEl, 0, 0, w, h);
     }
 
-    if (portraitDebugMaskEnabled() && lastMask) {
-        try {
-            const lctx = lastMask.getContext('2d', { alpha: true });
-            const maskImd = lctx.getImageData(0, 0, w, h);
-            resetCtx2d(ctx);
-            ctx.clearRect(0, 0, w, h);
-            resetCtx2d(ctx);
-            ctx.putImageData(maskImd, 0, 0);
-        } catch (_) { /* ignore mask debug read issues */ }
+    if (portraitDebugMaskEnabled() && lastMask && (mode === 'blur' || mode === 'solid')) {
+        resetCtx2d(ctx);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.drawImage(lastMask, 0, 0, w, h);
     }
 
     return mode !== 'none';
