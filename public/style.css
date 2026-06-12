@@ -281,14 +281,15 @@ body {
 .stepper {
     display: flex;
     justify-content: center;
+    align-items: center;
     gap: 3.5rem;
-    margin-bottom: 2.65rem;
-    padding-bottom: 0.35rem;
+    margin-bottom: 2.25rem; /* space for labels below circles */
+    padding: 0 0.5rem;
     position: relative;
 }
 
 .panel-left > .carousel-container {
-    margin-top: 0.55rem;
+    margin-top: 0.25rem;
 }
 
 .step-item {
@@ -306,16 +307,25 @@ body {
     transition: 0.3s;
     position: relative;
     flex-shrink: 0;
+    cursor: default;
+    z-index: 1;
 }
 
+/* Label: absolutely centred below each circle, full width allowed */
 .step-item span {
     position: absolute;
-    top: 40px;
-    font-size: 0.7rem;
+    top: 38px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.58rem;
     white-space: nowrap;
     font-weight: 700;
     text-transform: uppercase;
-    opacity: 0.6;
+    letter-spacing: 0.04em;
+    color: var(--text-light);
+    opacity: 0.65;
+    pointer-events: none;
+    line-height: 1;
 }
 
 .step-item.active {
@@ -329,12 +339,18 @@ body {
 .step-item.active span {
     color: var(--primary);
     opacity: 1;
+    font-weight: 800;
 }
 
 .step-item.completed {
     border-color: var(--success);
     background: var(--success);
     color: white;
+}
+
+.step-item.completed span {
+    color: var(--success);
+    opacity: 0.8;
 }
 
 .carousel-container {
@@ -669,12 +685,13 @@ input[readonly] {
 
 .batch-shelf {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    /* Fixed 60px columns — fills row, items stay compact regardless of count */
+    grid-template-columns: repeat(auto-fill, minmax(55px, 65px));
     grid-auto-rows: auto;
-    gap: 1rem;
+    gap: 0.75rem;
     min-height: auto;
-    padding: 1rem;
-    justify-content: center;
+    padding: 0.875rem;
+    justify-content: start;
     background: #f8fafc;
     border-radius: 12px;
     border: 1px dashed var(--border);
@@ -1156,7 +1173,7 @@ input[readonly] {
 
     .app-main {
         padding: 1.5rem;
-        gap: 2rem;
+        gap: 1.5rem;
     }
 
     /* Stack preview layout vertically */
@@ -1169,12 +1186,13 @@ input[readonly] {
         grid-template-columns: 1fr;
     }
 
-    /* Batch layout stacks too */
+    /* Batch layout: stack form over batch, no sidebar */
     .app-main.layout-batch {
         grid-template-columns: 1fr;
         max-width: 100%;
         margin-left: auto;
         margin-right: auto;
+        gap: 1rem;
     }
 
     .app-main.layout-batch .panel-left {
@@ -1211,21 +1229,18 @@ input[readonly] {
 
     .app-main {
         padding: 1rem;
-        gap: 1.5rem;
+        gap: 1.25rem;
     }
 
     .app-main.layout-initial {
         max-width: 100%;
+        padding: 1rem;
     }
 
-    /* Stepper — reduce gaps on small screens */
+    /* Stepper — reduce gap so labels don't overlap */
     .stepper {
-        gap: 2rem;
-        margin-bottom: 2.25rem;
-    }
-
-    .step-item span {
-        font-size: 0.62rem;
+        gap: 3rem;
+        margin-bottom: 2rem;
     }
 
     /* Two-column form rows collapse to single column */
@@ -1234,22 +1249,18 @@ input[readonly] {
         gap: 0;
     }
 
-    /* Canvas stage min-height reduced */
+    /* Canvas stage */
     .canvas-stage {
         min-height: 150px;
         padding: 1rem;
     }
 
-    /* ID card scales down gracefully */
+    /* ID card scales down */
     #idCard {
         max-width: 200px;
     }
 
-    /* Batch shelf adapts */
-    .batch-shelf {
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 0.75rem;
-    }
+    /* Batch shelf inherits auto-fill layout — no override needed */
 
     /* Preview header wraps */
     .preview-header {
@@ -1267,7 +1278,7 @@ input[readonly] {
         padding: 1.25rem;
     }
 
-    /* Modal content full-width */
+    /* Modal */
     .modal-content {
         padding: 1.5rem;
     }
@@ -1294,28 +1305,36 @@ input[readonly] {
     .header-actions .btn-sm {
         padding: 0.4rem 0.65rem;
         font-size: 0.7rem;
+        min-height: 36px;
     }
 
     .app-main {
         padding: 0.875rem;
-        gap: 1.25rem;
+        gap: 1rem;
     }
 
-    /* Stepper — very tight on phones */
+    .app-main.layout-initial {
+        padding: 0.875rem;
+    }
+
+    /* Stepper: circles evenly spaced across full width, labels centred under each */
     .stepper {
-        gap: 1.5rem;
+        justify-content: space-between;
+        gap: 0;
+        padding: 0 1.5rem;
         margin-bottom: 2rem;
     }
 
     .step-item {
-        width: 28px;
-        height: 28px;
-        font-size: 0.72rem;
+        width: 30px;
+        height: 30px;
+        font-size: 0.78rem;
     }
 
     .step-item span {
-        font-size: 0.58rem;
-        top: 34px;
+        top: 36px;
+        font-size: 0.55rem;
+        letter-spacing: 0.02em;
     }
 
     /* Typography */
@@ -1323,7 +1342,7 @@ input[readonly] {
         font-size: 0.72rem;
     }
 
-    /* Card padding minimal */
+    /* Card padding */
     .card-section {
         padding: 1rem;
         border-radius: 12px;
@@ -1333,14 +1352,14 @@ input[readonly] {
         padding: 0.875rem 1rem;
     }
 
-    /* Forms */
+    /* Forms — font-size 1rem prevents iOS auto-zoom on focus */
     input,
     select {
-        font-size: 1rem; /* Prevent iOS zoom on focus — must be ≥16px or use 1rem */
+        font-size: 1rem;
         padding: 0.65rem 0.75rem;
     }
 
-    /* Buttons full-width in actions */
+    /* Buttons full-width in step actions */
     .step-actions {
         flex-direction: column;
     }
@@ -1356,14 +1375,14 @@ input[readonly] {
         padding: 0.75rem;
     }
 
-    /* Batch shelf — 3 across on phones */
+    /* Batch shelf: slightly smaller columns on phone */
     .batch-shelf {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(48px, 58px));
         gap: 0.5rem;
         padding: 0.75rem;
     }
 
-    /* Batch footer buttons */
+    /* Batch footer */
     .batch-footer {
         gap: 0.4rem;
     }
@@ -1383,7 +1402,7 @@ input[readonly] {
         margin-bottom: 1.25rem;
     }
 
-    /* Toast container full-width */
+    /* Toast container full-width on phone */
     #toastContainer {
         right: 0.5rem;
         left: 0.5rem;
@@ -1400,7 +1419,7 @@ input[readonly] {
         max-width: 240px;
     }
 
-    /* Action bars */
+    /* Action bar stacks on phone */
     .action-bar-bottom {
         flex-direction: column;
         padding: 0.5rem 0.75rem;
@@ -1420,21 +1439,26 @@ input[readonly] {
 /* ── Extra small: ≤360px ── */
 @media (max-width: 360px) {
     .stepper {
-        gap: 1rem;
+        padding: 0 1rem;
     }
 
     .step-item {
-        width: 26px;
-        height: 26px;
-        font-size: 0.68rem;
+        width: 28px;
+        height: 28px;
+        font-size: 0.72rem;
     }
 
     .step-item span {
-        font-size: 0.54rem;
-        top: 32px;
+        font-size: 0.5rem;
+        top: 33px;
     }
 
     .app-main {
+        padding: 0.75rem;
+        gap: 0.875rem;
+    }
+
+    .app-main.layout-initial {
         padding: 0.75rem;
     }
 
@@ -1442,6 +1466,7 @@ input[readonly] {
         padding: 0.875rem;
     }
 
+    /* Hide logout on very small screens — only keep View Records */
     .header-actions .btn-ghost {
         display: none;
     }
