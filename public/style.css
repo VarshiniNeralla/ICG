@@ -18,12 +18,18 @@
     padding: 0;
 }
 
+/* overflow-x on html (not body) — prevents horizontal scroll without
+   breaking position:sticky on mobile Chrome/Android */
+html {
+    overflow-x: hidden;
+}
+
 body {
     font-family: 'Inter', sans-serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.5;
-    overflow-x: hidden;
+    min-height: 100%;
     -webkit-font-smoothing: antialiased;
 }
 
@@ -78,9 +84,13 @@ body {
     border-bottom: 1px solid var(--border);
     position: sticky;
     top: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
     z-index: 100;
     box-shadow: 0 1px 0 var(--border), 0 4px 16px rgba(0, 0, 0, 0.04);
     min-height: 56px;
+    display: block;
 }
 
 .header-inner {
