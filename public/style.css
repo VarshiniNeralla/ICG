@@ -36,13 +36,15 @@ body {
     align-items: center;
     justify-content: center;
     z-index: 2000;
+    padding: 1rem;
 }
 
 .login-card {
     background: white;
     padding: 2.5rem;
     border-radius: 24px;
-    width: 420px;
+    width: 100%;
+    max-width: 420px;
     box-shadow: 0 40px 100px -12px rgba(0, 0, 0, 0.6);
     border-bottom: 6px solid var(--accent);
 }
@@ -55,7 +57,6 @@ body {
 .login-logo {
     height: 50px;
     margin-bottom: 1.5rem;
-    /* filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1)); */
 }
 
 .login-header h2 {
@@ -87,22 +88,27 @@ body {
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    gap: 2rem;
+    gap: 1rem;
+    flex-wrap: nowrap;
 }
 
 .header-actions {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 0.5rem;
     margin-left: auto;
+    flex-shrink: 0;
+    flex-wrap: wrap;
 }
 
 .header-logo {
     height: 36px;
+    flex-shrink: 0;
 }
 
 .header-text {
-    margin-right: auto;
+    min-width: 0;
+    flex: 1;
 }
 
 .header-text h1 {
@@ -110,6 +116,9 @@ body {
     font-weight: 800;
     color: var(--primary);
     letter-spacing: -0.025em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .header-text p {
@@ -118,6 +127,9 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.05em;
     font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* LAYOUT */
@@ -173,26 +185,10 @@ body {
 .app-main.layout-batch .panel-right {
     width: 340px;
     margin-top: 5.0rem;
-    /* Batch column — sits below stepper; nudge down from form card top */
 }
 
 .app-main.layout-batch .preview-card {
     display: none;
-}
-
-@media (max-width: 1024px) {
-    .app-main {
-        grid-template-columns: 1fr;
-        padding: 1.5rem;
-    }
-
-    .app-header {
-        padding: 0.75rem 1.5rem;
-    }
-
-    .panel-right {
-        grid-template-columns: 1fr;
-    }
 }
 
 /* PANEL & CARDS */
@@ -252,12 +248,14 @@ body {
     color: var(--primary);
     width: 32px;
     height: 32px;
+    min-width: 32px;
     border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     transition: all 0.2s;
+    flex-shrink: 0;
 }
 
 .btn-back:hover {
@@ -276,6 +274,7 @@ body {
     margin-bottom: 0 !important;
     border-bottom: none !important;
     padding-bottom: 0 !important;
+    min-width: 0;
 }
 
 /* CAROUSEL & STEPPER */
@@ -283,7 +282,6 @@ body {
     display: flex;
     justify-content: center;
     gap: 3.5rem;
-    /* Labels sit below circles (absolute); extra margin clears them above the card */
     margin-bottom: 2.65rem;
     padding-bottom: 0.35rem;
     position: relative;
@@ -307,6 +305,7 @@ body {
     color: var(--text-light);
     transition: 0.3s;
     position: relative;
+    flex-shrink: 0;
 }
 
 .step-item span {
@@ -393,6 +392,7 @@ select {
     font-size: 0.95rem;
     background: #fafafa;
     transition: border-color 0.2s, background 0.2s;
+    min-width: 0;
 }
 
 input:focus {
@@ -429,6 +429,8 @@ input[readonly] {
     padding: 0;
     transition: color 0.2s;
     z-index: 10;
+    min-width: 44px;
+    min-height: 44px;
 }
 
 .toggle-password svg {
@@ -472,12 +474,15 @@ input[readonly] {
     color: var(--primary);
     cursor: pointer;
     user-select: none;
+    min-height: 44px;
 }
 
 .photo-bg-option input {
     width: auto;
     margin: 0;
     accent-color: var(--primary);
+    min-width: 18px;
+    min-height: 18px;
 }
 
 #croppedPhoto.photo-fade-in {
@@ -503,7 +508,8 @@ input[readonly] {
 }
 
 .webcam-canvas-area {
-    width: 280px;
+    width: 100%;
+    max-width: 280px;
     margin: 0 auto 0.3rem auto;
     aspect-ratio: 1/1;
     background: #000;
@@ -565,6 +571,7 @@ input[readonly] {
     gap: 0.75rem;
     justify-content: center;
     margin-top: 0.3rem;
+    flex-wrap: wrap;
 }
 
 /* PASS PREVIEW & BATCH – SIDE-BY-SIDE */
@@ -587,6 +594,8 @@ input[readonly] {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
 }
 
 .action-stack {
@@ -608,10 +617,12 @@ input[readonly] {
     padding: 0.65rem 1rem;
     border-top: 1px solid var(--border);
     justify-content: center;
+    flex-wrap: wrap;
 }
 
 .action-bar-bottom .btn {
     flex: 1;
+    min-width: 80px;
     justify-content: center;
     padding: 0.5rem 0.75rem;
     font-size: 0.8rem;
@@ -621,7 +632,7 @@ input[readonly] {
     background: #eef2f6;
     border-radius: 12px;
     padding: 1.5rem;
-    min-height: 400px;
+    min-height: 200px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -633,10 +644,10 @@ input[readonly] {
 
 /* Must match CR80_W:CR80_H (11:15) — bitmap is CR80 * PRINT_SCALE; wrong box distorts the whole preview */
 #idCard {
-    width: 240px;
+    width: 100%;
+    max-width: 240px;
     height: auto;
     aspect-ratio: 11 / 15;
-    max-width: 100%;
     object-fit: contain;
     border-radius: 10px;
     background: white;
@@ -653,14 +664,14 @@ input[readonly] {
 /* BATCH (right sidebar) */
 .batch-card {
     margin-top: 0;
-    min-width: 320px;
+    min-width: 0;
 }
 
 .batch-shelf {
     display: grid;
-    grid-template-columns: repeat(3, 49.5px);
-    grid-auto-rows: 1fr;
-    gap: 1.5rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-rows: auto;
+    gap: 1rem;
     min-height: auto;
     padding: 1rem;
     justify-content: center;
@@ -695,8 +706,8 @@ input[readonly] {
     position: absolute;
     top: -5px;
     right: -5px;
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     background: #ef4444;
     color: white;
     border: none;
@@ -761,12 +772,19 @@ input[readonly] {
     align-items: center;
     gap: 0.6rem;
     transition: 0.2s;
+    min-height: 44px;
+    touch-action: manipulation;
+    white-space: nowrap;
 }
 
 .btn-primary {
     background: var(--primary);
     color: white;
     box-shadow: 0 4px 14px rgba(26, 60, 110, 0.2);
+}
+
+.btn-primary:hover {
+    filter: brightness(1.08);
 }
 
 .btn-primary:disabled {
@@ -796,7 +814,6 @@ input[readonly] {
     color: white;
     border: none;
     box-shadow: 0 4px 14px rgba(239, 68, 68, 0.2);
-    /* Added a shadow similar to primary/success */
 }
 
 .btn-danger:hover {
@@ -815,11 +832,13 @@ input[readonly] {
 .btn-sm {
     padding: 0.45rem 0.9rem;
     font-size: 0.75rem;
+    min-height: 36px;
 }
 
 .btn-xs {
     padding: 0.3rem 0.7rem;
     font-size: 0.65rem;
+    min-height: 30px;
 }
 
 .btn-ghost {
@@ -896,14 +915,15 @@ input[readonly] {
     align-items: center;
     justify-content: center;
     z-index: 5000;
+    padding: 1rem;
 }
 
 .modal-content {
     background: white;
-    padding: 2.5rem;
+    padding: 2rem;
     border-radius: 20px;
-    width: 380px;
-    max-width: 90%;
+    width: 100%;
+    max-width: 380px;
     text-align: center;
     box-shadow: 0 50px 100px -20px rgba(0, 0, 0, 0.4);
     border: 1px solid var(--border);
@@ -930,6 +950,7 @@ input[readonly] {
     display: flex;
     gap: 0.75rem;
     justify-content: center;
+    flex-wrap: wrap;
 }
 
 @keyframes scaleInModal {
@@ -954,6 +975,7 @@ input[readonly] {
     flex-direction: column;
     gap: 0.5rem;
     pointer-events: none;
+    max-width: calc(100vw - 2rem);
 }
 
 .toast {
@@ -969,6 +991,7 @@ input[readonly] {
     opacity: 0;
     transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.4s ease;
     max-width: 380px;
+    word-break: break-word;
     pointer-events: auto;
 }
 
@@ -995,7 +1018,7 @@ input[readonly] {
 /* ───── DATA TABLE (Sites view) ───── */
 .data-table {
     width: 100%;
-    min-width: 1400px;
+    min-width: 600px;
     border-collapse: collapse;
     font-size: 0.8rem;
     background: white;
@@ -1056,8 +1079,8 @@ input[readonly] {
     position: absolute;
     top: 1.25rem;
     right: 1.25rem;
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
     background: #fee2e2;
     color: #ef4444;
@@ -1070,12 +1093,365 @@ input[readonly] {
     cursor: pointer;
     transition: all 0.2s ease;
     z-index: 10;
+    min-width: 36px;
 }
 
 .modal-close-btn:hover {
     background: #ef4444;
     color: white;
     transform: rotate(90deg);
+}
+
+/* ── STEP ACTIONS ── */
+.step-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+}
+
+/* ── RECORDS MODAL (wide table modal) ── */
+.records-modal-content {
+    text-align: left !important;
+    padding: 1.5rem !important;
+}
+
+.records-modal-content .modal-header {
+    margin-bottom: 1rem;
+}
+
+.records-modal-content h3 {
+    text-align: left;
+    font-size: 1rem;
+}
+
+.records-modal-content .modal-body {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* ── DUPLICATE MODAL detail box ── */
+#existingRecordDetails {
+    background: #fffbeb;
+    border: 1px solid #fef3c7;
+    padding: 1rem;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    text-align: left;
+    margin-bottom: 1.5rem;
+    word-break: break-word;
+}
+
+/* ══════════════════════════════════════════
+   RESPONSIVE BREAKPOINTS
+══════════════════════════════════════════ */
+
+/* ── Large Desktop: 1280px+ uses all defaults above ── */
+
+/* ── Laptop / Tablet: ≤1024px ── */
+@media (max-width: 1024px) {
+    .app-header {
+        padding: 0.75rem 1.5rem;
+    }
+
+    .app-main {
+        padding: 1.5rem;
+        gap: 2rem;
+    }
+
+    /* Stack preview layout vertically */
+    .app-main.layout-preview {
+        grid-template-columns: 1fr;
+    }
+
+    .app-main.layout-preview .panel-right {
+        margin-top: 0;
+        grid-template-columns: 1fr;
+    }
+
+    /* Batch layout stacks too */
+    .app-main.layout-batch {
+        grid-template-columns: 1fr;
+        max-width: 100%;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    .app-main.layout-batch .panel-left {
+        max-width: 100%;
+    }
+
+    .app-main.layout-batch .panel-right {
+        width: 100%;
+        margin-top: 0;
+    }
+
+    .panel-right {
+        grid-template-columns: 1fr;
+    }
+
+    .batch-card {
+        min-width: 0;
+    }
+}
+
+/* ── Tablet: ≤768px ── */
+@media (max-width: 768px) {
+    .app-header {
+        padding: 0.65rem 1rem;
+    }
+
+    .header-inner {
+        gap: 0.75rem;
+    }
+
+    .header-text h1 {
+        font-size: 1rem;
+    }
+
+    .app-main {
+        padding: 1rem;
+        gap: 1.5rem;
+    }
+
+    .app-main.layout-initial {
+        max-width: 100%;
+    }
+
+    /* Stepper — reduce gaps on small screens */
+    .stepper {
+        gap: 2rem;
+        margin-bottom: 2.25rem;
+    }
+
+    .step-item span {
+        font-size: 0.62rem;
+    }
+
+    /* Two-column form rows collapse to single column */
+    .form-row.two-col {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+
+    /* Canvas stage min-height reduced */
+    .canvas-stage {
+        min-height: 150px;
+        padding: 1rem;
+    }
+
+    /* ID card scales down gracefully */
+    #idCard {
+        max-width: 200px;
+    }
+
+    /* Batch shelf adapts */
+    .batch-shelf {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.75rem;
+    }
+
+    /* Preview header wraps */
+    .preview-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .action-stack-top {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    /* Card padding reduces */
+    .card-section {
+        padding: 1.25rem;
+    }
+
+    /* Modal content full-width */
+    .modal-content {
+        padding: 1.5rem;
+    }
+}
+
+/* ── Mobile: ≤480px ── */
+@media (max-width: 480px) {
+    .app-header {
+        padding: 0.6rem 0.875rem;
+    }
+
+    .header-text h1 {
+        font-size: 0.95rem;
+    }
+
+    .header-text p {
+        display: none;
+    }
+
+    .header-actions {
+        gap: 0.35rem;
+    }
+
+    .header-actions .btn-sm {
+        padding: 0.4rem 0.65rem;
+        font-size: 0.7rem;
+    }
+
+    .app-main {
+        padding: 0.875rem;
+        gap: 1.25rem;
+    }
+
+    /* Stepper — very tight on phones */
+    .stepper {
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    .step-item {
+        width: 28px;
+        height: 28px;
+        font-size: 0.72rem;
+    }
+
+    .step-item span {
+        font-size: 0.58rem;
+        top: 34px;
+    }
+
+    /* Typography */
+    .section-title {
+        font-size: 0.72rem;
+    }
+
+    /* Card padding minimal */
+    .card-section {
+        padding: 1rem;
+        border-radius: 12px;
+    }
+
+    #step2 > .card-section {
+        padding: 0.875rem 1rem;
+    }
+
+    /* Forms */
+    input,
+    select {
+        font-size: 1rem; /* Prevent iOS zoom on focus — must be ≥16px or use 1rem */
+        padding: 0.65rem 0.75rem;
+    }
+
+    /* Buttons full-width in actions */
+    .step-actions {
+        flex-direction: column;
+    }
+
+    .step-actions .btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    /* Canvas stage */
+    .canvas-stage {
+        min-height: 120px;
+        padding: 0.75rem;
+    }
+
+    /* Batch shelf — 3 across on phones */
+    .batch-shelf {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.5rem;
+        padding: 0.75rem;
+    }
+
+    /* Batch footer buttons */
+    .batch-footer {
+        gap: 0.4rem;
+    }
+
+    /* Modal */
+    .modal-content {
+        padding: 1.25rem 1rem;
+        border-radius: 16px;
+    }
+
+    .modal-content h3 {
+        font-size: 1rem;
+    }
+
+    .modal-content p {
+        font-size: 0.875rem;
+        margin-bottom: 1.25rem;
+    }
+
+    /* Toast container full-width */
+    #toastContainer {
+        right: 0.5rem;
+        left: 0.5rem;
+        max-width: none;
+    }
+
+    .toast {
+        max-width: none;
+        width: 100%;
+    }
+
+    /* Photo module */
+    .webcam-canvas-area {
+        max-width: 240px;
+    }
+
+    /* Action bars */
+    .action-bar-bottom {
+        flex-direction: column;
+        padding: 0.5rem 0.75rem;
+    }
+
+    .action-bar-bottom .btn {
+        flex: none;
+        width: 100%;
+    }
+
+    /* Camera toolbar */
+    .camera-toolbar {
+        gap: 0.5rem;
+    }
+}
+
+/* ── Extra small: ≤360px ── */
+@media (max-width: 360px) {
+    .stepper {
+        gap: 1rem;
+    }
+
+    .step-item {
+        width: 26px;
+        height: 26px;
+        font-size: 0.68rem;
+    }
+
+    .step-item span {
+        font-size: 0.54rem;
+        top: 32px;
+    }
+
+    .app-main {
+        padding: 0.75rem;
+    }
+
+    .card-section {
+        padding: 0.875rem;
+    }
+
+    .header-actions .btn-ghost {
+        display: none;
+    }
+}
+
+/* ── Large screens: ≥1440px ── */
+@media (min-width: 1440px) {
+    .app-main.layout-preview .panel-right {
+        grid-template-columns: 1fr 340px;
+    }
 }
 
 /* Respect user's motion preferences */

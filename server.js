@@ -6,8 +6,36 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const cloudinary = require('cloudinary').v2;
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
+// Inline security headers (replaces helmet — avoids npm install issues on restricted networks)
+function inlineHelmet(options = {}) {
+    return (req, res, next) => {
+        if (!options.contentSecurityPolicy) {
+            // skip CSP — handled by dedicated middleware below
+        }
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+        res.setHeader('X-XSS-Protection', '0');
+        res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+        res.setHeader('X-Download-Options', 'noopen');
+        res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+        res.setHeader('Referrer-Policy', 'no-referrer');
+        res.removeHeader('X-Powered-By');
+        next();
+    };
+}
+
+// Inline rate limiter (replaces express-rate-limit)
+function inlineRateLimit({ windowMs = 900000, max = 300, message = { error: 'Too many requests' } } = {}) {
+    const hits = new Map();
+    setInterval(() => hits.clear(), windowMs);
+    return (req, res, next) => {
+        const key = req.ip;
+        const current = hits.get(key) || 0;
+        if (current >= max) return res.status(429).json(message);
+        hits.set(key, current + 1);
+        next();
+    };
+}
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
@@ -19,7 +47,7 @@ if (!isProduction && fs.existsSync(path.join(__dirname, '.env'))) {
 }
 
 const PORT = process.env.PORT || 10000;
-const HOST = '0.0.0.0';
+const HOST = process.env.HOST || undefined;
 const REQUIRED_ENV_VARS = [
     'MONGO_URI',
     'CLOUDINARY_CLOUD_NAME',
@@ -49,7 +77,7 @@ cloudinary.api.ping()
 
 // ── Security Middleware ──────────────────────────────────────────────────────
 app.set('trust proxy', 1);
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(inlineHelmet({ contentSecurityPolicy: false }));
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean);
 app.use(cors({
@@ -68,11 +96,9 @@ app.use(cors({
 app.use(bodyParser.json({ limit: '5mb' }));
 
 // Rate limiting — 300 requests per 15 min per IP
-app.use('/api/', rateLimit({
+app.use('/api/', inlineRateLimit({
     windowMs: 15 * 60 * 1000,
     max: 300,
-    standardHeaders: true,
-    legacyHeaders: false,
     message: { error: 'Too many requests, please try again later.' }
 }));
 
@@ -175,8 +201,8 @@ mongoose.connect(DB_URI)
     });
 
 // Start server independently of DB connection
-const server = app.listen(PORT, HOST, () => {
-    console.log(`[Startup] Server listening on ${HOST}:${PORT}`);
+const server = app.listen(PORT, ...(HOST ? [HOST] : []), () => {
+    console.log(`[Startup] Server listening on ${HOST || '::'}:${PORT}`);
     console.log(`[Startup] NODE_ENV=${process.env.NODE_ENV || 'development'}`);
 });
 
