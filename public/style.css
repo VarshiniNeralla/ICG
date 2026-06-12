@@ -71,15 +71,16 @@ body {
     justify-content: center;
 }
 
-/* NAVBAR */
+/* ── NAVBAR ── */
 .app-header {
     background: white;
-    padding: 0.75rem 3rem;
+    padding: 0 3rem;
     border-bottom: 1px solid var(--border);
     position: sticky;
     top: 0;
     z-index: 100;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.01);
+    box-shadow: 0 1px 0 var(--border), 0 4px 16px rgba(0, 0, 0, 0.04);
+    min-height: 56px;
 }
 
 .header-inner {
@@ -87,9 +88,82 @@ body {
     margin: 0 auto;
     display: flex;
     align-items: center;
-    justify-content: flex-start;
     gap: 1rem;
-    flex-wrap: nowrap;
+    height: 56px;
+}
+
+/* Brand area: logo mark + text */
+.header-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-width: 0;
+    flex: 0 1 auto;
+    text-decoration: none;
+}
+
+/* Coloured brand pill / monogram if no logo image */
+.header-brand-mark {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.header-brand-mark svg {
+    display: block;
+}
+
+.header-text {
+    min-width: 0;
+}
+
+.header-text h1 {
+    font-size: 1rem;
+    font-weight: 800;
+    color: var(--primary);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.header-text p {
+    font-size: 0.65rem;
+    color: var(--text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+    margin-top: 1px;
+}
+
+/* Divider between brand and operator info */
+.header-divider {
+    width: 1px;
+    height: 24px;
+    background: var(--border);
+    flex-shrink: 0;
+}
+
+/* Operator info pill */
+.header-operator {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-light);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1;
 }
 
 .header-actions {
@@ -98,38 +172,69 @@ body {
     gap: 0.5rem;
     margin-left: auto;
     flex-shrink: 0;
-    flex-wrap: wrap;
 }
 
 .header-logo {
-    height: 36px;
+    height: 32px;
     flex-shrink: 0;
 }
 
-.header-text {
-    min-width: 0;
-    flex: 1;
-}
-
-.header-text h1 {
-    font-size: 1.15rem;
-    font-weight: 800;
+/* ── Header button variants ── */
+.btn-header-outline {
+    background: transparent;
+    border: 1.5px solid var(--border);
     color: var(--primary);
-    letter-spacing: -0.025em;
+    padding: 0.35rem 0.875rem;
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    transition: border-color 0.2s, background 0.2s;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    min-height: 34px;
+    font-family: inherit;
+    touch-action: manipulation;
 }
 
-.header-text p {
-    font-size: 0.7rem;
+.btn-header-outline:hover {
+    border-color: var(--primary);
+    background: rgba(26, 60, 110, 0.04);
+}
+
+.btn-header-ghost {
+    background: transparent;
+    border: none;
     color: var(--text-light);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    padding: 0.35rem 0.625rem;
+    border-radius: 8px;
+    font-size: 0.78rem;
     font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    transition: background 0.2s, color 0.2s;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    min-height: 34px;
+    font-family: inherit;
+    touch-action: manipulation;
+}
+
+.btn-header-ghost:hover {
+    background: #f1f5f9;
+    color: var(--primary);
+}
+
+/* Button label variants — short label hidden by default, shown on small screens */
+.btn-label-short {
+    display: none;
+}
+
+.btn-label-full {
+    display: inline;
 }
 
 /* LAYOUT */
@@ -1168,7 +1273,7 @@ input[readonly] {
 /* ── Laptop / Tablet: ≤1024px ── */
 @media (max-width: 1024px) {
     .app-header {
-        padding: 0.75rem 1.5rem;
+        padding: 0 1.5rem;
     }
 
     .app-main {
@@ -1216,7 +1321,7 @@ input[readonly] {
 /* ── Tablet: ≤768px ── */
 @media (max-width: 768px) {
     .app-header {
-        padding: 0.65rem 1rem;
+        padding: 0 1rem;
     }
 
     .header-inner {
@@ -1224,7 +1329,7 @@ input[readonly] {
     }
 
     .header-text h1 {
-        font-size: 1rem;
+        font-size: 0.95rem;
     }
 
     .app-main {
@@ -1287,13 +1392,14 @@ input[readonly] {
 /* ── Mobile: ≤480px ── */
 @media (max-width: 480px) {
     .app-header {
-        padding: 0.6rem 0.875rem;
+        padding: 0 0.875rem;
     }
 
     .header-text h1 {
-        font-size: 0.95rem;
+        font-size: 0.875rem;
     }
 
+    /* Operator sub-label hidden on phones — saves horizontal space */
     .header-text p {
         display: none;
     }
@@ -1302,10 +1408,20 @@ input[readonly] {
         gap: 0.35rem;
     }
 
-    .header-actions .btn-sm {
-        padding: 0.4rem 0.65rem;
-        font-size: 0.7rem;
-        min-height: 36px;
+    /* Swap full label for short label on phone */
+    .btn-label-full {
+        display: none;
+    }
+
+    .btn-label-short {
+        display: inline;
+    }
+
+    /* Tighten header buttons */
+    .btn-header-outline,
+    .btn-header-ghost {
+        padding: 0.35rem 0.625rem;
+        font-size: 0.72rem;
     }
 
     .app-main {
@@ -1317,11 +1433,12 @@ input[readonly] {
         padding: 0.875rem;
     }
 
-    /* Stepper: circles evenly spaced across full width, labels centred under each */
+    /* Stepper: evenly spaced, circles fully inside the card */
     .stepper {
         justify-content: space-between;
         gap: 0;
-        padding: 0 1.5rem;
+        /* padding = half circle width (15px) so edge circles don't clip */
+        padding: 0 15px;
         margin-bottom: 2rem;
     }
 
@@ -1439,7 +1556,7 @@ input[readonly] {
 /* ── Extra small: ≤360px ── */
 @media (max-width: 360px) {
     .stepper {
-        padding: 0 1rem;
+        padding: 0 14px;
     }
 
     .step-item {
@@ -1466,8 +1583,9 @@ input[readonly] {
         padding: 0.875rem;
     }
 
-    /* Hide logout on very small screens — only keep View Records */
-    .header-actions .btn-ghost {
+    /* Hide logout text on very small screens — icon only */
+    .btn-header-ghost .btn-label-full,
+    .btn-header-ghost .btn-label-short {
         display: none;
     }
 }

@@ -79,14 +79,16 @@ body {
     min-height: 1.2em;
 }
 
-/* HEADER */
+/* ── HEADER ── */
 .app-header {
     background: white;
-    padding: 0.75rem 3rem;
+    padding: 0 3rem;
     border-bottom: 1px solid var(--border);
     position: sticky;
     top: 0;
     z-index: 100;
+    box-shadow: 0 1px 0 var(--border), 0 4px 16px rgba(0, 0, 0, 0.04);
+    min-height: 56px;
 }
 
 .header-inner {
@@ -95,37 +97,121 @@ body {
     display: flex;
     align-items: center;
     gap: 1rem;
-    flex-wrap: nowrap;
+    height: 56px;
+}
+
+.header-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-width: 0;
+    flex: 0 1 auto;
+    text-decoration: none;
+}
+
+.header-brand-mark {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.header-brand-mark svg {
+    display: block;
 }
 
 .header-logo {
-    height: 36px;
+    height: 32px;
     flex-shrink: 0;
 }
 
 .header-text {
     min-width: 0;
-    flex: 1;
 }
 
 .header-text h1 {
-    font-size: 1.15rem;
+    font-size: 1rem;
     font-weight: 800;
     color: var(--primary);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
 .header-text p {
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     color: var(--text-light);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    line-height: 1.2;
+    margin-top: 1px;
+}
+
+/* ── Header button variants ── */
+.btn-header-outline {
+    background: transparent;
+    border: 1.5px solid var(--border);
+    color: var(--primary);
+    padding: 0.35rem 0.875rem;
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    transition: border-color 0.2s, background 0.2s;
+    white-space: nowrap;
+    min-height: 34px;
+    font-family: inherit;
+    touch-action: manipulation;
+}
+
+.btn-header-outline:hover {
+    border-color: var(--primary);
+    background: rgba(26, 60, 110, 0.04);
+}
+
+.btn-header-ghost {
+    background: transparent;
+    border: none;
+    color: var(--text-light);
+    padding: 0.35rem 0.625rem;
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    transition: background 0.2s, color 0.2s;
+    white-space: nowrap;
+    min-height: 34px;
+    font-family: inherit;
+    touch-action: manipulation;
+}
+
+.btn-header-ghost:hover {
+    background: #f1f5f9;
+    color: var(--primary);
+}
+
+.header-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
 }
 
 /* NAV TABS */
@@ -1031,7 +1117,7 @@ input[readonly] {
 /* ── Laptop / Tablet: ≤1024px ── */
 @media (max-width: 1024px) {
     .app-header {
-        padding: 0.75rem 1.5rem;
+        padding: 0 1.5rem;
     }
 
     .stats-grid {
@@ -1063,7 +1149,7 @@ input[readonly] {
 /* ── Tablet: ≤768px ── */
 @media (max-width: 768px) {
     .app-header {
-        padding: 0.65rem 1rem;
+        padding: 0 1rem;
     }
 
     .header-inner {
@@ -1071,7 +1157,7 @@ input[readonly] {
     }
 
     .header-text h1 {
-        font-size: 1rem;
+        font-size: 0.95rem;
     }
 
     .admin-nav {
@@ -1146,15 +1232,21 @@ input[readonly] {
 /* ── Mobile: ≤480px ── */
 @media (max-width: 480px) {
     .app-header {
-        padding: 0.6rem 0.875rem;
+        padding: 0 0.875rem;
     }
 
     .header-text h1 {
-        font-size: 0.95rem;
+        font-size: 0.875rem;
     }
 
     .header-text p {
         display: none;
+    }
+
+    .btn-header-outline,
+    .btn-header-ghost {
+        padding: 0.35rem 0.625rem;
+        font-size: 0.72rem;
     }
 
     .admin-nav {
