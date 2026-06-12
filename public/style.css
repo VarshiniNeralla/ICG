@@ -18,10 +18,12 @@
     padding: 0;
 }
 
-/* overflow-x on html (not body) — prevents horizontal scroll without
-   breaking position:sticky on mobile Chrome/Android */
+/* Set overflow-x on html, NOT body.
+   overflow-x on body creates a new scroll container that breaks
+   position:sticky on mobile Chrome — the sticky element clips to
+   the body's paint box instead of spanning the full viewport. */
 html {
-    overflow-x: hidden;
+    overflow-x: clip;
 }
 
 body {
@@ -29,8 +31,8 @@ body {
     background: var(--bg);
     color: var(--text);
     line-height: 1.5;
-    min-height: 100%;
     -webkit-font-smoothing: antialiased;
+    width: 100%;
 }
 
 /* LOGIN SCREEN */
@@ -86,7 +88,9 @@ body {
     top: 0;
     left: 0;
     right: 0;
+    /* Explicit width prevents sticky-element sizing bugs in mobile browsers */
     width: 100%;
+    box-sizing: border-box;
     z-index: 100;
     box-shadow: 0 1px 0 var(--border), 0 4px 16px rgba(0, 0, 0, 0.04);
     min-height: 56px;

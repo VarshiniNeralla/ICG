@@ -19,7 +19,7 @@
 }
 
 html {
-    overflow-x: hidden;
+    overflow-x: clip;
 }
 
 body {
@@ -27,8 +27,8 @@ body {
     background: var(--bg);
     color: var(--text);
     line-height: 1.5;
-    min-height: 100%;
     -webkit-font-smoothing: antialiased;
+    width: 100%;
 }
 
 /* LOGIN */
@@ -93,6 +93,7 @@ body {
     left: 0;
     right: 0;
     width: 100%;
+    box-sizing: border-box;
     z-index: 100;
     box-shadow: 0 1px 0 var(--border), 0 4px 16px rgba(0, 0, 0, 0.04);
     min-height: 56px;
