@@ -62,9 +62,39 @@ body {
     margin-bottom: 2rem;
 }
 
+.login-brand-lockup {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    background: #f1f5f9;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 10px 18px;
+    margin-bottom: 1.75rem;
+}
+
 .login-logo {
-    height: 50px;
-    margin-bottom: 1.5rem;
+    height: 42px;
+    width: auto;
+    display: block;
+    flex-shrink: 0;
+}
+
+.login-brand-divider {
+    width: 1px;
+    height: 32px;
+    background: var(--border);
+    margin: 0 14px;
+    flex-shrink: 0;
+}
+
+.login-brand-name {
+    font-size: 1.15rem;
+    font-weight: 900;
+    color: var(--primary);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    line-height: 1;
 }
 
 .login-header h2 {
@@ -190,7 +220,53 @@ body {
 
 .header-logo {
     height: 32px;
+    width: auto;
     flex-shrink: 0;
+    display: block;
+}
+
+.header-brand-sep {
+    width: 1.5px;
+    height: 28px;
+    background: var(--border);
+    border-radius: 2px;
+    flex-shrink: 0;
+    margin: 0 0.5rem;
+}
+
+.header-brand-wordmark {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    min-width: 0;
+}
+
+.header-brand-word {
+    font-size: 1rem;
+    font-weight: 900;
+    color: var(--primary);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    line-height: 1.1;
+    white-space: nowrap;
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 1px;
+    display: inline-block;
+}
+
+.header-brand-wordmark p,
+.header-text-sub {
+    font-size: 0.6rem;
+    color: var(--text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+    margin-top: 1px;
 }
 
 /* ── Header button variants ── */
