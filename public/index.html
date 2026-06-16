@@ -374,8 +374,56 @@
                 <h3>Site Records: <span id="siteRecordsTitle"></span></h3>
             </div>
             <div class="modal-body">
-                <div class="table-actions" style="margin-bottom: 1rem; display: flex; justify-content: flex-end;">
-                    <button id="btnExportSiteExcel" class="btn btn-success btn-xs">Export to Excel</button>
+                <div class="records-toolbar">
+                    <!-- Left: schedule -->
+                    <div class="schedule-panel" id="schedulePanel">
+                        <button type="button" class="schedule-toggle-btn" id="btnToggleSchedule">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                            </svg>
+                            <span>Auto-Download</span>
+                        </button>
+                        <div class="schedule-inline" id="scheduleForm">
+                            <span class="schedule-at-label">daily at</span>
+                            <select id="scheduleHour" class="schedule-select">
+                                <option value="1">1</option><option value="2">2</option>
+                                <option value="3">3</option><option value="4">4</option>
+                                <option value="5">5</option><option value="6">6</option>
+                                <option value="7">7</option><option value="8">8</option>
+                                <option value="9">9</option><option value="10">10</option>
+                                <option value="11">11</option><option value="12" selected>12</option>
+                            </select>
+                            <span class="schedule-time-colon">:</span>
+                            <select id="scheduleMinute" class="schedule-select">
+                                <option value="00" selected>00</option><option value="05">05</option>
+                                <option value="10">10</option><option value="15">15</option>
+                                <option value="20">20</option><option value="25">25</option>
+                                <option value="30">30</option><option value="35">35</option>
+                                <option value="40">40</option><option value="45">45</option>
+                                <option value="50">50</option><option value="55">55</option>
+                            </select>
+                            <select id="scheduleAmPm" class="schedule-select">
+                                <option value="AM">AM</option>
+                                <option value="PM" selected>PM</option>
+                            </select>
+                            <button type="button" id="btnSaveSchedule" class="schedule-save-btn">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                Confirm
+                            </button>
+                            <button type="button" id="btnClearSchedule" class="schedule-remove-btn" style="display:none;">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                Remove
+                            </button>
+                        </div>
+                        <span class="schedule-status" id="scheduleStatus"></span>
+                    </div>
+                    <!-- Right: export -->
+                    <button id="btnExportSiteExcel" class="btn btn-success btn-xs">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        Export to Excel
+                    </button>
                 </div>
                 <div style="overflow-x: auto;">
                     <table class="data-table" id="siteRecordsTable">

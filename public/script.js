@@ -1721,6 +1721,130 @@
         setTimeout(() => URL.revokeObjectURL(link.href), 1000);
     }
 
+    // ── Auto-download scheduler ──────────────────────────────────────────────
+    let scheduleCheckInterval = null;
+
+    function getScheduleKey() {
+        return `autoDownloadTime_${operator.name}`;
+    }
+
+    // Stored format: "HH:MM" in 24hr for easy comparison
+    function to24hr(h, m, ampm) {
+        let hour = parseInt(h, 10);
+        if (ampm === 'AM' && hour === 12) hour = 0;
+        if (ampm === 'PM' && hour !== 12) hour += 12;
+        return `${String(hour).padStart(2, '0')}:${m}`;
+    }
+
+    function to12hrLabel(time24) {
+        const [h, m] = time24.split(':');
+        const hour = parseInt(h, 10);
+        const ampm = hour >= 12 ? 'PM' : 'AM';
+        const h12 = hour % 12 || 12;
+        return `${h12}:${m} ${ampm}`;
+    }
+
+    function renderScheduleStatus() {
+        const saved = localStorage.getItem(getScheduleKey());
+        const statusEl = document.getElementById('scheduleStatus');
+        const clearBtn = document.getElementById('btnClearSchedule');
+        if (!statusEl) return;
+        if (saved) {
+            statusEl.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Auto-download set for <strong>${to12hrLabel(saved)}</strong> daily`;
+            statusEl.className = 'schedule-status schedule-status--active';
+            if (clearBtn) clearBtn.style.display = 'inline-flex';
+            // Pre-fill selects
+            const [h, m] = saved.split(':');
+            const hour = parseInt(h, 10);
+            const ampm = hour >= 12 ? 'PM' : 'AM';
+            const h12 = String(hour % 12 || 12);
+            const selH = document.getElementById('scheduleHour');
+            const selM = document.getElementById('scheduleMinute');
+            const selA = document.getElementById('scheduleAmPm');
+            if (selH) selH.value = h12;
+            if (selM) selM.value = m;
+            if (selA) selA.value = ampm;
+        } else {
+            statusEl.textContent = '';
+            statusEl.className = 'schedule-status';
+            if (clearBtn) clearBtn.style.display = 'none';
+        }
+    }
+
+    function startScheduleWatcher() {
+        if (scheduleCheckInterval) return;
+        // Check every 60 seconds — aligned to avoid drift
+        function check() {
+            const saved = localStorage.getItem(getScheduleKey());
+            if (!saved) return;
+            const now = new Date();
+            const hh = String(now.getHours()).padStart(2, '0');
+            const mm = String(now.getMinutes()).padStart(2, '0');
+            if (`${hh}:${mm}` === saved) {
+                const lastRun = localStorage.getItem(getScheduleKey() + '_lastRun');
+                const today = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+                if (lastRun === today) return;
+                localStorage.setItem(getScheduleKey() + '_lastRun', today);
+                exportSiteToExcel();
+            }
+        }
+        // Align first tick to the next full minute
+        const now = new Date();
+        const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
+        setTimeout(() => {
+            check();
+            scheduleCheckInterval = setInterval(check, 60000);
+        }, msToNextMinute);
+    }
+
+    let scheduleUIInitialized = false;
+    function initScheduleUI() {
+        if (scheduleUIInitialized) { renderScheduleStatus(); return; }
+        scheduleUIInitialized = true;
+        const btnToggle = document.getElementById('btnToggleSchedule');
+        const form = document.getElementById('scheduleForm');
+        const btnSave = document.getElementById('btnSaveSchedule');
+        const btnClear = document.getElementById('btnClearSchedule');
+
+        if (btnToggle) {
+            btnToggle.onclick = () => {
+                const opening = !form.classList.contains('schedule-inline--open');
+                form.classList.toggle('schedule-inline--open', opening);
+                btnToggle.classList.toggle('schedule-toggle-btn--active', opening);
+            };
+        }
+
+        function closeScheduleForm() {
+            form.classList.remove('schedule-inline--open');
+            btnToggle && btnToggle.classList.remove('schedule-toggle-btn--active');
+        }
+
+        if (btnSave) {
+            btnSave.onclick = () => {
+                const h = document.getElementById('scheduleHour').value;
+                const m = document.getElementById('scheduleMinute').value;
+                const a = document.getElementById('scheduleAmPm').value;
+                const val = to24hr(h, m, a);
+                localStorage.setItem(getScheduleKey(), val);
+                renderScheduleStatus();
+                startScheduleWatcher();
+                closeScheduleForm();
+            };
+        }
+
+        if (btnClear) {
+            btnClear.onclick = () => {
+                localStorage.removeItem(getScheduleKey());
+                localStorage.removeItem(getScheduleKey() + '_lastRun');
+                renderScheduleStatus();
+            };
+        }
+
+        renderScheduleStatus();
+        if (localStorage.getItem(getScheduleKey())) startScheduleWatcher();
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     document.addEventListener('DOMContentLoaded', () => {
         initSession().catch((e) => console.error('initSession failed:', e));
 
@@ -1728,7 +1852,7 @@
         const btnExportSiteExcel = document.getElementById('btnExportSiteExcel');
         const closeRecords = document.getElementById('closeRecords');
 
-        if (btnViewRecords) btnViewRecords.onclick = loadSiteRecords;
+        if (btnViewRecords) btnViewRecords.onclick = () => { loadSiteRecords(); initScheduleUI(); };
         if (btnExportSiteExcel) btnExportSiteExcel.onclick = exportSiteToExcel;
         if (closeRecords) closeRecords.onclick = () => document.getElementById('recordsModal').style.display = 'none';
 
