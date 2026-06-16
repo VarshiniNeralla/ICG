@@ -483,27 +483,38 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
         startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
+        // Retention base filter — all counts & charts are scoped to this window
+        const baseFilter = {};
+        if (req.query.from) {
+            const fromDate = new Date(req.query.from);
+            if (!isNaN(fromDate.getTime())) baseFilter.createdAt = { $gte: fromDate };
+        }
+
         const [total, today, week, month] = await Promise.all([
-            Employee.countDocuments(),
-            Employee.countDocuments({ createdAt: { $gte: startOfDay } }),
-            Employee.countDocuments({ createdAt: { $gte: startOfWeek } }),
-            Employee.countDocuments({ createdAt: { $gte: startOfMonth } })
+            Employee.countDocuments(baseFilter),
+            Employee.countDocuments({ ...baseFilter, createdAt: { ...(baseFilter.createdAt || {}), $gte: startOfDay } }),
+            Employee.countDocuments({ ...baseFilter, createdAt: { ...(baseFilter.createdAt || {}), $gte: startOfWeek } }),
+            Employee.countDocuments({ ...baseFilter, createdAt: { ...(baseFilter.createdAt || {}), $gte: startOfMonth } })
         ]);
 
-        // Group by contractor (with 5s timeout to prevent hanging)
-        const byContractor = await Employee.aggregate([
+        const matchStage = Object.keys(baseFilter).length ? { $match: baseFilter } : null;
+        const byContractorPipeline = [
+            ...(matchStage ? [matchStage] : []),
             { $group: { _id: '$contractor', count: { $sum: 1 } } }
-        ]).option({ maxTimeMS: 5000 });
-
-        const bySite = await Employee.aggregate([
+        ];
+        const bySitePipeline = [
+            ...(matchStage ? [matchStage] : []),
             { $group: { _id: '$site', count: { $sum: 1 } } }
-        ]).option({ maxTimeMS: 5000 });
+        ];
+
+        const [byContractor, bySite] = await Promise.all([
+            Employee.aggregate(byContractorPipeline).option({ maxTimeMS: 5000 }),
+            Employee.aggregate(bySitePipeline).option({ maxTimeMS: 5000 })
+        ]);
 
         const formatGroup = (arr) => {
             const obj = {};
-            arr.forEach(item => {
-                if (item._id) obj[item._id] = item.count;
-            });
+            arr.forEach(item => { if (item._id) obj[item._id] = item.count; });
             return obj;
         };
 

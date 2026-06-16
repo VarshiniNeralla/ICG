@@ -142,9 +142,27 @@ function animateCounter(el, target) {
     requestAnimationFrame(tick);
 }
 
+function getRetentionCutoff() {
+    const retention = localStorage.getItem('ep_retention') || '1m';
+    if (retention === 'all') return null;
+    const d = new Date();
+    if (retention === '1d') d.setDate(d.getDate() - 1);
+    else if (retention === '1w') d.setDate(d.getDate() - 7);
+    else if (retention === '1m') d.setMonth(d.getMonth() - 1);
+    else if (retention === '1y') d.setFullYear(d.getFullYear() - 1);
+    else if (retention.startsWith('custom_')) {
+        const days = parseInt(retention.split('_')[1]);
+        if (days > 0) d.setDate(d.getDate() - days);
+        else return null;
+    }
+    return d.toISOString().split('T')[0];
+}
+
 async function loadDashboard() {
     try {
-        const resp = await fetch(`${API}/api/stats`, { headers: adminHeaders() });
+        const cutoff = getRetentionCutoff();
+        const url = cutoff ? `${API}/api/stats?from=${cutoff}` : `${API}/api/stats`;
+        const resp = await fetch(url, { headers: adminHeaders() });
         if (handleAuthError(resp)) return;
         if (!resp.ok) { console.error('Stats fetch failed:', resp.status); return; }
         const data = await resp.json();
@@ -166,6 +184,13 @@ async function loadDashboard() {
 
         renderBarChart('siteChartArea', data.bySite || {});
         renderBarChart('contractorChartArea', data.byContractor || {});
+
+        // Show active retention window as a badge on the dashboard
+        const retention = localStorage.getItem('ep_retention') || '1m';
+        const labels = { '1d': '1 Day', '1w': '1 Week', '1m': '1 Month', '1y': '1 Year', 'all': 'All Time' };
+        let label = labels[retention] || (retention.startsWith('custom_') ? `Last ${retention.split('_')[1]} Days` : '1 Month');
+        const badge = document.getElementById('retentionBadge');
+        if (badge) badge.textContent = `Showing: ${label}`;
     } catch (err) { console.error('Dashboard load failed:', err); }
 }
 
@@ -262,18 +287,8 @@ async function loadRecords(from, to) {
         let url = `${API}/api/employees`;
         const params = [];
         if (!from && !to) {
-            const retention = localStorage.getItem('ep_retention') || '1m';
-            let cutoff = null;
-            // Use fresh Date for each branch to avoid mutation bugs
-            if (retention === '1d') { const d = new Date(); d.setDate(d.getDate() - 1); cutoff = d; }
-            else if (retention === '1w') { const d = new Date(); d.setDate(d.getDate() - 7); cutoff = d; }
-            else if (retention === '1m') { const d = new Date(); d.setMonth(d.getMonth() - 1); cutoff = d; }
-            else if (retention === '1y') { const d = new Date(); d.setFullYear(d.getFullYear() - 1); cutoff = d; }
-            else if (retention.startsWith('custom_')) {
-                const days = parseInt(retention.split('_')[1]);
-                if (days > 0) { const d = new Date(); d.setDate(d.getDate() - days); cutoff = d; }
-            }
-            if (cutoff && retention !== 'all') from = cutoff.toISOString().split('T')[0];
+            const cutoff = getRetentionCutoff();
+            if (cutoff) from = cutoff;
         }
         if (from) params.push(`from=${from}`);
         if (to) params.push(`to=${to}`);
