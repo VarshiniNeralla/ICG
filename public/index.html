@@ -32,17 +32,8 @@
                 <div class="field-group">
                     <label for="username">Username</label>
                     <select id="username" required>
-                        <!-- <option value="">Select Username</option>
-                        <option value="CSO-Akrida">CSO-Akrida</option>
-                        <option value="CSO-Apas">CSO-Apas</option> -->
-                        <option value="CSO-Avali">CSO-Avali</option>
-                        <!-- <option value="CSO-Grava Commercial">CSO-Grava Commercial</option> -->
-                        <!-- <option value="CSO-Grava Residences">CSO-Grava Residences</option> -->
-                        <!-- <option value="CSO-Sayuk">CSO-Sayuk</option> -->
                         <option value="CSO-Udyan">CSO-Udyan</option>
-                        <!-- <option value="CSO-Vipina">CSO-Vipina</option> -->
                         <option value="CSO-Vyoma">CSO-Vyoma</option>
-                        <!-- <option value="CSO-99">CSO-99</option> -->
                     </select>
                 </div>
                 <div class="field-group">
@@ -127,14 +118,14 @@
                                 <form id="passForm" autocomplete="off">
                                     <div class="field-group">
                                         <label for="fullName">Full Name</label>
-                                        <input type="text" id="fullName" maxlength="40" placeholder="John Doe"
-                                            required />
+                                        <input type="text" id="fullName" maxlength="40" placeholder="John Doe" required />
+                                        <span class="field-error" id="err-fullName"></span>
                                     </div>
                                     <div class="form-row two-col">
                                         <div class="field-group">
                                             <label for="aadhar">Aadhar Number</label>
-                                            <input type="text" id="aadhar" maxlength="12" placeholder="123456789012"
-                                                required />
+                                            <input type="text" id="aadhar" maxlength="12" placeholder="123456789012" required />
+                                            <span class="field-error" id="err-aadhar"></span>
                                         </div>
                                         <div class="field-group">
                                             <label for="gender">Gender</label>
@@ -144,16 +135,19 @@
                                                 <option>Female</option>
                                                 <option>Other</option>
                                             </select>
+                                            <span class="field-error" id="err-gender"></span>
                                         </div>
                                     </div>
                                     <div class="form-row two-col">
                                         <div class="field-group">
                                             <label for="dob">Date of Birth</label>
                                             <input type="date" id="dob" required />
+                                            <span class="field-error" id="err-dob"></span>
                                         </div>
                                         <div class="field-group">
                                             <label for="age">Age</label>
                                             <input type="text" id="age" readonly />
+                                            <span class="field-error" id="err-age"></span>
                                         </div>
                                     </div>
                                     <div class="field-group">
@@ -170,6 +164,7 @@
                                             <option>O-</option>
                                             <option>N/A</option>
                                         </select>
+                                        <span class="field-error" id="err-bloodGroup"></span>
                                     </div>
                                 </form>
                                 <div class="step-actions">
@@ -200,6 +195,7 @@
                                         <select id="contractor" required>
                                             <option value="">Select Contractor</option>
                                         </select>
+                                        <span class="field-error" id="err-contractor"></span>
                                     </div>
                                     <div class="field-group">
                                         <label for="laborCamp">Labor Camp</label>
@@ -208,6 +204,7 @@
                                             <option>LC</option>
                                             <option>N/A</option>
                                         </select>
+                                        <span class="field-error" id="err-laborCamp"></span>
                                     </div>
                                 </div>
                                 <div class="field-group optional-other-wrap" id="contractorOtherWrap"
@@ -223,10 +220,12 @@
                                         <select id="designation" required>
                                             <option value="">Select</option>
                                         </select>
+                                        <span class="field-error" id="err-designation"></span>
                                     </div>
                                     <div class="field-group">
                                         <label for="contact">Contact Number</label>
                                         <input type="tel" id="contact" maxlength="10" placeholder="Number" required />
+                                        <span class="field-error" id="err-contact"></span>
                                     </div>
                                 </div>
                                 <div class="field-group optional-other-wrap" id="designationOtherWrap"
@@ -240,10 +239,12 @@
                                     <div class="field-group">
                                         <label for="doi">Date of Induction</label>
                                         <input type="date" id="doi" required />
+                                        <span class="field-error" id="err-doi"></span>
                                     </div>
                                     <div class="field-group">
                                         <label for="validity">Validity</label>
                                         <input type="date" id="validity" required />
+                                        <span class="field-error" id="err-validity"></span>
                                     </div>
                                 </div>
                                 <div class="field-group">
@@ -417,13 +418,26 @@
                         </div>
                         <span class="schedule-status" id="scheduleStatus"></span>
                     </div>
-                    <!-- Right: export -->
-                    <button id="btnExportSiteExcel" class="btn btn-success btn-xs">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                        </svg>
-                        Export to Excel
-                    </button>
+                    <!-- Right: export dropdown -->
+                    <div class="export-dropdown-wrap" id="exportDropdownWrap">
+                        <button class="btn btn-success btn-xs export-dropdown-btn" id="btnExportSiteExcel" type="button">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                            Export Excel
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+                        <div class="export-dropdown-menu" id="exportDropdownMenu">
+                            <button type="button" class="export-dropdown-item" id="btnExportNoImages">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                Without Photos
+                            </button>
+                            <button type="button" class="export-dropdown-item" id="btnExportWithImages">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                                With Photos
+                            </button>
+                        </div>
+                    </div>
                 </div>
                 <div style="overflow-x: auto;">
                     <table class="data-table" id="siteRecordsTable">
@@ -504,6 +518,7 @@
         </div>
     </div>
 
+    <script src="xlsx.min.js"></script>
     <script src="script.js"></script>
 </body>
 

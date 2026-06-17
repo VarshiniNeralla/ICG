@@ -568,6 +568,20 @@ body {
     margin-bottom: 1rem;
 }
 
+.field-error {
+    display: none;
+    font-size: 0.7rem;
+    color: var(--danger);
+    font-weight: 600;
+    margin-top: 0.3rem;
+    padding-left: 2px;
+}
+
+.field-invalid {
+    border-color: var(--danger) !important;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12) !important;
+}
+
 .form-row.two-col {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1176,6 +1190,61 @@ input[readonly] {
 .schedule-status--active {
     color: var(--success);
     font-weight: 600;
+}
+
+/* ── Export dropdown ── */
+.export-dropdown-wrap {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.export-dropdown-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.export-dropdown-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    background: white;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+    min-width: 180px;
+    z-index: 100;
+    overflow: hidden;
+}
+
+.export-dropdown-menu--open {
+    display: block;
+}
+
+.export-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.6rem 1rem;
+    background: none;
+    border: none;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text);
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
+    transition: background 0.15s;
+}
+
+.export-dropdown-item:hover {
+    background: #f1f5f9;
+}
+
+.export-dropdown-item + .export-dropdown-item {
+    border-top: 1px solid var(--border);
 }
 
 .btn-danger {

@@ -127,11 +127,14 @@ setInterval(() => {
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'admin@123';
 
+// Site-restricted admins — each can only see their own site's records
+const SITE_ADMINS = {
+    'admin@udyan.mhc.in':  { password: 'admin@udyan',  site: 'Udyan' },
+    'admin@vyoma.mhc.in':  { password: 'admin@vyoma',  site: 'Vyoma' },
+};
+
 const VALID_OPERATORS = [
-    'CSO-Akrida', 'CSO-Apas', 'CSO-Avali',
-    'CSO-Grava Commercial', 'CSO-Grava Residences',
-    'CSO-Sayuk', 'CSO-Udyan', 'CSO-Vipina',
-    'CSO-Vyoma', 'CSO-99'
+    'CSO-Udyan', 'CSO-Vyoma'
 ];
 
 function getOperatorPassword(username) {
@@ -192,8 +195,14 @@ process.on('uncaughtException', (err) => {
 
 // Connect to MongoDB but do NOT crash if it fails — allow server to start
 mongoose.connect(DB_URI)
-    .then(() => {
+    .then(async () => {
         console.log('Successfully connected to MongoDB Atlas');
+        // Drop legacy single-field unique index on MasterData.type if it exists,
+        // so the new compound {type,site} index can be created cleanly.
+        try {
+            await mongoose.connection.collection('masterdatas').dropIndex('type_1');
+            console.log('[Migration] Dropped legacy MasterData type_1 index');
+        } catch (_) { /* index didn't exist — that's fine */ }
     })
     .catch(err => {
         console.error('ERROR: Could not connect to MongoDB Atlas:', err.message);
@@ -261,13 +270,26 @@ app.post('/api/auth/operator', (req, res) => {
 });
 
 app.post('/api/auth/admin', (req, res) => {
-    const { username, password } = req.body;
+    const username = (req.body.username || '').trim();
+    const password = (req.body.password || '').trim();
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-    if (username !== ADMIN_USER || password !== ADMIN_PASS) return res.status(401).json({ error: 'Invalid credentials' });
 
-    const token = crypto.randomBytes(32).toString('hex');
-    sessions.set(token, { role: 'admin', username, expiresAt: Date.now() + SESSION_TTL_ADMIN });
-    res.json({ token });
+    // Super admin — full access
+    if (username === ADMIN_USER && password === ADMIN_PASS) {
+        const token = crypto.randomBytes(32).toString('hex');
+        sessions.set(token, { role: 'admin', username, site: null, expiresAt: Date.now() + SESSION_TTL_ADMIN });
+        return res.json({ token, site: null });
+    }
+
+    // Site-restricted admin
+    const siteAdmin = SITE_ADMINS[username.toLowerCase()];
+    if (siteAdmin && password === siteAdmin.password) {
+        const token = crypto.randomBytes(32).toString('hex');
+        sessions.set(token, { role: 'admin', username, site: siteAdmin.site, expiresAt: Date.now() + SESSION_TTL_ADMIN });
+        return res.json({ token, site: siteAdmin.site });
+    }
+
+    return res.status(401).json({ error: 'Invalid credentials' });
 });
 
 app.post('/api/auth/verify', (req, res) => {
@@ -438,11 +460,13 @@ app.get('/api/employees', requireAuth, async (req, res) => {
                 const toDate = new Date(to + 'T23:59:59.999Z');
                 if (!isNaN(toDate.getTime())) filter.createdAt.$lte = toDate;
             }
-            // Remove empty createdAt filter if both dates were invalid
             if (Object.keys(filter.createdAt).length === 0) delete filter.createdAt;
         }
 
-        if (site) {
+        // Site-restricted admin: always lock to their site, ignore any site param from client
+        if (req.userSession.site) {
+            filter.site = req.userSession.site;
+        } else if (site) {
             filter.site = site;
         }
 
@@ -474,6 +498,31 @@ app.delete('/api/employees/:id', requireAdmin, async (req, res) => {
     }
 });
 
+// Image proxy — fetches a Cloudinary URL server-side and returns base64 (avoids CORS on client)
+app.get('/api/imgproxy', requireAuth, async (req, res) => {
+    const url = req.query.url;
+    if (!url || !url.startsWith('https://res.cloudinary.com/')) {
+        return res.status(400).json({ error: 'Invalid URL' });
+    }
+    try {
+        const https = require('https');
+        const chunks = [];
+        await new Promise((resolve, reject) => {
+            https.get(url, (r) => {
+                r.on('data', c => chunks.push(c));
+                r.on('end', resolve);
+                r.on('error', reject);
+            }).on('error', reject);
+        });
+        const buf = Buffer.concat(chunks);
+        const b64 = buf.toString('base64');
+        const ct = 'image/jpeg';
+        res.json({ b64, ct });
+    } catch (e) {
+        res.status(500).json({ error: 'Fetch failed' });
+    }
+});
+
 // DASHBOARD STATS (admin only)
 app.get('/api/stats', requireAdmin, async (req, res) => {
     try {
@@ -485,16 +534,21 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
 
         // Retention base filter — all counts & charts are scoped to this window
         const baseFilter = {};
-        if (req.query.from) {
-            const fromDate = new Date(req.query.from);
-            if (!isNaN(fromDate.getTime())) baseFilter.createdAt = { $gte: fromDate };
+        if (req.query.from || req.query.to) {
+            const createdAt = {};
+            if (req.query.from) { const d = new Date(req.query.from); if (!isNaN(d.getTime())) createdAt.$gte = d; }
+            if (req.query.to)   { const d = new Date(req.query.to);   if (!isNaN(d.getTime())) createdAt.$lt  = d; }
+            if (Object.keys(createdAt).length) baseFilter.createdAt = createdAt;
         }
+        // Site-restricted admin — lock stats to their site
+        if (req.userSession.site) baseFilter.site = req.userSession.site;
 
+        const toClamp = baseFilter.createdAt && baseFilter.createdAt.$lt ? { $lt: baseFilter.createdAt.$lt } : {};
         const [total, today, week, month] = await Promise.all([
             Employee.countDocuments(baseFilter),
-            Employee.countDocuments({ ...baseFilter, createdAt: { ...(baseFilter.createdAt || {}), $gte: startOfDay } }),
-            Employee.countDocuments({ ...baseFilter, createdAt: { ...(baseFilter.createdAt || {}), $gte: startOfWeek } }),
-            Employee.countDocuments({ ...baseFilter, createdAt: { ...(baseFilter.createdAt || {}), $gte: startOfMonth } })
+            Employee.countDocuments({ ...baseFilter, createdAt: { ...(baseFilter.createdAt || {}), ...toClamp, $gte: startOfDay } }),
+            Employee.countDocuments({ ...baseFilter, createdAt: { ...(baseFilter.createdAt || {}), ...toClamp, $gte: startOfWeek } }),
+            Employee.countDocuments({ ...baseFilter, createdAt: { ...(baseFilter.createdAt || {}), ...toClamp, $gte: startOfMonth } })
         ]);
 
         const matchStage = Object.keys(baseFilter).length ? { $match: baseFilter } : null;
@@ -529,17 +583,49 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
 });
 
 // Master Data Management schemas & endpoints
+// site: null  = global/super-admin record
+// site: 'Vyoma' = scoped to that site
 const MasterDataSchema = new mongoose.Schema({
-    type: { type: String, unique: true },
+    type: { type: String, required: true },
+    site: { type: String, default: null },
     data: [String]
 });
+MasterDataSchema.index({ type: 1, site: 1 }, { unique: true });
 const MasterData = mongoose.model('MasterData', MasterDataSchema);
+
+// Resolve which site scope to use for a GET request.
+// Site admins are always locked to their session site.
+// Super admin (session.site = null) may pass ?site= to read a specific site.
+// Unauthenticated callers (operators) use ?site= query param.
+async function resolveSiteForRead(req) {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (token) {
+        const session = sessions.get(token);
+        if (session) {
+            if (session.site) return session.site; // site admin — locked to their site
+            // super admin — honour ?site= if provided
+            return req.query.site || null;
+        }
+    }
+    // No auth — use query param (operators)
+    return req.query.site || null;
+}
 
 const setupMasterDataRoute = (type, defaultData) => {
     app.get(`/api/${type}`, async (req, res) => {
         try {
-            const doc = await MasterData.findOne({ type });
-            res.json(doc ? doc.data : defaultData);
+            const site = await resolveSiteForRead(req);
+            if (site) {
+                // Try site-specific first, fall back to global
+                const siteDoc = await MasterData.findOne({ type, site });
+                if (siteDoc) return res.json(siteDoc.data);
+                const globalDoc = await MasterData.findOne({ type, site: null });
+                return res.json(globalDoc ? globalDoc.data : defaultData);
+            } else {
+                // Super admin or no site — return global
+                const doc = await MasterData.findOne({ type, site: null });
+                return res.json(doc ? doc.data : defaultData);
+            }
         } catch (err) {
             console.error(err.message); res.status(500).json({ error: 'Internal server error' });
         }
@@ -551,11 +637,14 @@ const setupMasterDataRoute = (type, defaultData) => {
             if (!Array.isArray(data) || data.length > 100) {
                 return res.status(400).json({ error: 'Invalid data: must be an array with max 100 items.' });
             }
-            // Filter to only non-empty trimmed strings
             const cleaned = data.filter(item => typeof item === 'string' && item.trim().length > 0)
                                 .map(item => item.trim());
+            // Scope to the admin's own site.
+            // Super admin (site=null) may pass ?site= to edit a specific site's data.
+            let site = req.userSession.site || null;
+            if (!site && req.query.site) site = req.query.site;
             await MasterData.findOneAndUpdate(
-                { type },
+                { type, site },
                 { data: cleaned },
                 { upsert: true, new: true }
             );

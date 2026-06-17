@@ -45,10 +45,11 @@
     }
 
     async function populateDropdowns() {
+        const siteParam = operator.site ? `?site=${encodeURIComponent(operator.site)}` : '';
         const [sites, contractors, roles] = await Promise.all([
-            fetchList('/api/sites'),
-            fetchList('/api/contractors'),
-            fetchList('/api/roles')
+            fetchList(`/api/sites${siteParam}`),
+            fetchList(`/api/contractors${siteParam}`),
+            fetchList(`/api/roles${siteParam}`)
         ]);
 
         const sSel = document.getElementById('siteSelect');
@@ -264,6 +265,7 @@
             loginScreen.style.display = 'none';
             mainApp.style.display = 'block';
             setDefaultDates();
+            populateDropdowns();
         }
         const savedBatch = localStorage.getItem('ep_batch');
         if (savedBatch) {
@@ -307,6 +309,7 @@
             loginScreen.style.display = 'none';
             mainApp.style.display = 'block';
             setDefaultDates();
+            populateDropdowns();
         } catch (err) {
             showAlert('Login failed. Please check your connection and try again.');
         }
@@ -418,26 +421,51 @@
         return `${day}-${month}-${year}`;
     };
 
+    function setFieldError(id, msg) {
+        const el = document.getElementById('err-' + id);
+        if (!el) return;
+        el.textContent = msg;
+        el.style.display = msg ? 'block' : 'none';
+        const input = document.getElementById(id);
+        if (input) input.classList.toggle('field-invalid', !!msg);
+    }
+
+    function clearFieldErrors(ids) {
+        ids.forEach(id => setFieldError(id, ''));
+    }
+
     function validateStep(step) {
         const data = getFormData();
+        let valid = true;
+
         if (step === 1) {
-            if (!data.fullName || data.fullName.length < 3) return "Valid full name required.";
-            if (!/^[A-Za-z.\s]+$/.test(data.fullName)) return "Name must contain only letters, spaces, and dots.";
-            if (data.aadhar.length !== 12 || isNaN(data.aadhar)) return "Aadhar must be 12 numeric digits.";
-            if (!data.dob) return "Date of Birth required.";
-            const age = parseInt(data.age);
-            if (age < 18) return "Age must be at least 18 years.";
-            if (age > 100) return "Age cannot exceed 100 years.";
-            if (!data.gender || !data.bloodGroup) return "Select gender and blood group.";
+            clearFieldErrors(['fullName', 'aadhar', 'gender', 'dob', 'age', 'bloodGroup']);
+            if (!data.fullName || data.fullName.length < 3) { setFieldError('fullName', 'Full name must be at least 3 characters.'); valid = false; }
+            else if (!/^[A-Za-z.\s]+$/.test(data.fullName)) { setFieldError('fullName', 'Name must contain only letters, spaces, and dots.'); valid = false; }
+            if (data.aadhar.length !== 12 || isNaN(data.aadhar)) { setFieldError('aadhar', 'Aadhar must be exactly 12 numeric digits.'); valid = false; }
+            if (!data.dob) { setFieldError('dob', 'Date of Birth is required.'); valid = false; }
+            else {
+                const age = parseInt(data.age);
+                if (age < 18) { setFieldError('age', 'Age must be at least 18 years.'); valid = false; }
+                else if (age > 100) { setFieldError('age', 'Age cannot exceed 100 years.'); valid = false; }
+            }
+            if (!data.gender) { setFieldError('gender', 'Please select a gender.'); valid = false; }
+            if (!data.bloodGroup) { setFieldError('bloodGroup', 'Please select a blood group.'); valid = false; }
         }
+
         if (step === 2) {
-            if (!data.contractor || !data.laborCamp || !data.designation) return "Select all employer fields.";
-            if (data.contact.length !== 10 || isNaN(data.contact)) return "Contact must be 10 numeric digits.";
-            if (!/^[6-9]/.test(data.contact)) return "Phone number must start with 6, 7, 8, or 9.";
-            if (!data.doi || !data.validity) return "DOI and Validity required.";
-            if (new Date(data.validity) <= new Date(data.issueDate)) return "Validity must be in future.";
+            clearFieldErrors(['contractor', 'laborCamp', 'designation', 'contact', 'doi', 'validity']);
+            if (!data.contractor) { setFieldError('contractor', 'Please select a contractor.'); valid = false; }
+            if (!data.laborCamp) { setFieldError('laborCamp', 'Please select a labor camp.'); valid = false; }
+            if (!data.designation) { setFieldError('designation', 'Please select a designation.'); valid = false; }
+            if (data.contact.length !== 10 || isNaN(data.contact)) { setFieldError('contact', 'Contact must be exactly 10 numeric digits.'); valid = false; }
+            else if (!/^[6-9]/.test(data.contact)) { setFieldError('contact', 'Phone number must start with 6, 7, 8, or 9.'); valid = false; }
+            if (!data.doi) { setFieldError('doi', 'Date of Induction is required.'); valid = false; }
+            if (!data.validity) { setFieldError('validity', 'Validity date is required.'); valid = false; }
+            else if (valid && new Date(data.validity) <= new Date(data.issueDate)) { setFieldError('validity', 'Validity date must be in the future.'); valid = false; }
         }
-        return true;
+
+        return valid;
     }
 
     function goToStep(step) {
@@ -1648,6 +1676,8 @@
     }
 
     // ------ SITE RECORDS FOR OPERATORS ------
+    let _siteRecordsCache = [];
+
     async function loadSiteRecords() {
         const site = operator.site;
         if (!site) return;
@@ -1670,6 +1700,8 @@
                 tbody.innerHTML = '<tr><td colspan="14" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
                 return;
             }
+
+            _siteRecordsCache = records;
 
             records.forEach(r => {
                 const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API_BASE}/${r.photoPath.replace(/\\/g, '/')}`) : '';
@@ -1697,28 +1729,103 @@
         }
     }
 
-    function exportSiteToExcel() {
-        const table = document.getElementById('siteRecordsTable');
-        const rows = table.querySelectorAll('tr');
-        const SKIP_COLS = new Set([0]);
-        let csv = '';
+    function getSiteDateStr() {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
 
-        rows.forEach(row => {
-            const cells = row.querySelectorAll('th, td');
-            const rowData = [];
-            cells.forEach((cell, idx) => {
-                if (SKIP_COLS.has(idx)) return;
-                rowData.push('"' + cell.textContent.replace(/"/g, '""').trim() + '"');
-            });
-            csv += rowData.join(',') + '\n';
+    function exportSiteToExcel() { exportSiteXLS(false); }
+
+    function exportSiteXLS(withImages) {
+        const headers = ['Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date'];
+        const rows = _siteRecordsCache.map(r => {
+            const row = {};
+            row['Name']        = r.fullName   || '---';
+            row['Aadhar']      = String(r.aadhar  || '---');
+            row['Age']         = r.age         || '---';
+            row['Gender']      = r.gender      || '---';
+            row['DOB']         = formatDate(r.dob);
+            row['Blood Group'] = r.bloodGroup  || '---';
+            row['Contractor']  = r.contractor  || '---';
+            row['Camp']        = r.laborCamp   || '---';
+            row['Designation'] = r.designation || '---';
+            row['Contact']     = String(r.contact || '---');
+            row['Induction']   = formatDate(r.doi);
+            row['Validity']    = formatDate(r.validity);
+            row['Issue Date']  = formatDate(r.issueDate);
+            return row;
         });
+        const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
+        ws['!cols'] = headers.map(h => {
+            if (h === 'Name' || h === 'Contractor') return { wch: 22 };
+            if (h === 'Aadhar' || h === 'Contact') return { wch: 16 };
+            return { wch: 13 };
+        });
+        rows.forEach((_, i) => {
+            ['Aadhar','Contact'].forEach(field => {
+                const ci = headers.indexOf(field);
+                if (ci < 0) return;
+                const ca = XLSX.utils.encode_cell({ r: i + 1, c: ci });
+                if (ws[ca]) ws[ca].t = 's';
+            });
+        });
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Records');
+        XLSX.writeFile(wb, `SiteRecords_${operator.site.replace(/\s+/g,'_')}_${getSiteDateStr()}.xlsx`);
+    }
 
-        const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    async function exportSiteWithPhotosHTML() {
+        const btnWithImg = document.getElementById('btnExportWithImages');
+        const orig = btnWithImg ? btnWithImg.textContent : '';
+        if (btnWithImg) { btnWithImg.textContent = 'Preparing…'; btnWithImg.disabled = true; }
+
+        async function fetchB64(url) {
+            if (!url) return null;
+            try {
+                const r = await fetch(`${API_BASE}/api/imgproxy?url=${encodeURIComponent(url)}`, {
+                    headers: authHeaders()
+                });
+                if (!r.ok) return null;
+                const j = await r.json();
+                return j.b64 ? `data:${j.ct};base64,${j.b64}` : null;
+            } catch { return null; }
+        }
+
+        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date'];
+        const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
+        const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
+
+        const dataRows = await Promise.all(_siteRecordsCache.map(async (r, i) => {
+            const bg = i % 2 === 0 ? '#fff' : '#f8fafc';
+            const td = v => `<td style="padding:5px 9px;border:1px solid #e2e8f0;vertical-align:middle;font-size:10px;background:${bg};">${v||'---'}</td>`;
+            const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API_BASE}/${r.photoPath.replace(/\\/g,'/')}`) : '';
+            const b64 = await fetchB64(photoSrc);
+            const imgCell = `<td style="padding:3px;border:1px solid #e2e8f0;text-align:center;vertical-align:middle;background:${bg};">${b64 ? `<img src="${b64}" width="48" height="48" style="border-radius:4px;display:block;" />` : '—'}</td>`;
+            return `<tr>
+                ${imgCell}
+                ${td(r.fullName)}${td(r.aadhar)}${td(r.age)}${td(r.gender)}
+                ${td(formatDate(r.dob))}${td(r.bloodGroup)}${td(r.contractor)}
+                ${td(r.laborCamp)}${td(r.designation)}${td(r.contact)}
+                ${td(formatDate(r.doi))}${td(formatDate(r.validity))}${td(formatDate(r.issueDate))}
+            </tr>`;
+        }));
+
+        const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>Site Records With Photos — ${operator.site}</title>
+<style>body{font-family:Calibri,Arial,sans-serif;font-size:10px;margin:16px;}table{border-collapse:collapse;width:100%;}</style>
+</head><body>
+<h2 style="font-family:Arial;color:#1a3c6e;margin-bottom:12px;">Site Records: ${operator.site} — ${getSiteDateStr()}</h2>
+<table><thead><tr>${header}</tr></thead><tbody>${dataRows.join('')}</tbody></table>
+</body></html>`;
+
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = `SiteRecords_${operator.site.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+        link.download = `SiteRecords_${operator.site.replace(/\s+/g,'_')}_${getSiteDateStr()}_WithPhotos.html`;
         link.click();
-        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+        setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+
+        if (btnWithImg) { btnWithImg.textContent = orig; btnWithImg.disabled = false; }
     }
 
     // ── Auto-download scheduler ──────────────────────────────────────────────
@@ -1849,12 +1956,22 @@
         initSession().catch((e) => console.error('initSession failed:', e));
 
         const btnViewRecords = document.getElementById('btnViewRecords');
-        const btnExportSiteExcel = document.getElementById('btnExportSiteExcel');
         const closeRecords = document.getElementById('closeRecords');
 
         if (btnViewRecords) btnViewRecords.onclick = () => { loadSiteRecords(); initScheduleUI(); };
-        if (btnExportSiteExcel) btnExportSiteExcel.onclick = exportSiteToExcel;
         if (closeRecords) closeRecords.onclick = () => document.getElementById('recordsModal').style.display = 'none';
+
+        // Export dropdown
+        const exportBtn = document.getElementById('btnExportSiteExcel');
+        const exportMenu = document.getElementById('exportDropdownMenu');
+        if (exportBtn && exportMenu) {
+            exportBtn.onclick = (e) => { e.stopPropagation(); exportMenu.classList.toggle('export-dropdown-menu--open'); };
+            document.addEventListener('click', () => exportMenu.classList.remove('export-dropdown-menu--open'));
+        }
+        const btnNoImg = document.getElementById('btnExportNoImages');
+        const btnWithImg = document.getElementById('btnExportWithImages');
+        if (btnNoImg) btnNoImg.onclick = () => { exportMenu.classList.remove('export-dropdown-menu--open'); exportSiteXLS(false); };
+        if (btnWithImg) btnWithImg.onclick = () => { exportMenu.classList.remove('export-dropdown-menu--open'); exportSiteWithPhotosHTML(); };
 
         const closeAlert = document.getElementById('closeAlert');
         if (closeAlert) closeAlert.onclick = () => document.getElementById('customAlert').style.display = 'none';
@@ -1880,8 +1997,8 @@
             }
         };
 
-        btnToStep2.onclick = () => { const v = validateStep(1); v === true ? goToStep(2) : showAlert(v); };
-        btnToStep3.onclick = () => { const v = validateStep(2); v === true ? goToStep(3) : showAlert(v); };
+        btnToStep2.onclick = () => { if (validateStep(1)) goToStep(2); };
+        btnToStep3.onclick = () => { if (validateStep(2)) goToStep(3); };
         btnBackTo1.onclick = () => goToStep(1);
         btnBackTo2.onclick = () => goToStep(2);
 

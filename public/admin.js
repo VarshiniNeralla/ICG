@@ -44,6 +44,17 @@ const formatDate = (d) => {
     return `${day}-${month}-${year}`;
 };
 
+const formatDateTime = (d) => {
+    if (!d) return '<span style="color:var(--text-light)">—</span>';
+    const date = new Date(d);
+    if (isNaN(date.getTime())) return '<span style="color:var(--text-light)">—</span>';
+    let hours = date.getHours();
+    const mins = String(date.getMinutes()).padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12 || 12;
+    return `<span class="time-badge">${hours}:${mins} <span class="time-ampm">${ampm}</span></span>`;
+};
+
 // DOM
 const loginScreen = document.getElementById('adminLogin');
 const dashboard = document.getElementById('adminDashboard');
@@ -65,7 +76,7 @@ if (toggleAdminPassword) {
 loginForm.onsubmit = async (e) => {
     e.preventDefault();
     const u = document.getElementById('adminUser').value.trim();
-    const p = document.getElementById('adminPass').value;
+    const p = document.getElementById('adminPass').value.trim();
     try {
         const resp = await fetch(`${API}/api/auth/admin`, {
             method: 'POST',
@@ -80,6 +91,8 @@ loginForm.onsubmit = async (e) => {
         adminToken = result.token;
         sessionStorage.setItem('ep_admin', 'true');
         sessionStorage.setItem('ep_admin_token', adminToken);
+        if (result.site) sessionStorage.setItem('ep_admin_site', result.site);
+        else sessionStorage.removeItem('ep_admin_site');
         checkState();
     } catch {
         loginError.textContent = 'Login failed. Check connection.';
@@ -90,6 +103,19 @@ function checkState() {
     if (sessionStorage.getItem('ep_admin') === 'true' && adminToken) {
         loginScreen.style.display = 'none';
         dashboard.style.display = 'block';
+
+        // Show/hide site filter based on admin type
+        const siteFilterWrap = document.getElementById('siteFilterWrap');
+        if (siteFilterWrap) siteFilterWrap.style.display = isSuperAdmin() ? '' : 'none';
+
+        // Show site badge for site-restricted admins
+        const siteBadge = document.getElementById('adminSiteBadge');
+        if (siteBadge) {
+            const site = getAdminSite();
+            siteBadge.textContent = site ? `Site: ${site}` : '';
+            siteBadge.style.display = site ? 'inline-flex' : 'none';
+        }
+
         const savedTab = sessionStorage.getItem('ep_admin_tab') || 'dashboard';
         const tabBtn = document.querySelector(`.tab-btn[data-tab="${savedTab}"]`);
         if (tabBtn) tabBtn.click();
@@ -103,10 +129,14 @@ function checkState() {
     }
 }
 
+function getAdminSite() { return sessionStorage.getItem('ep_admin_site') || null; }
+function isSuperAdmin() { return !getAdminSite(); }
+
 document.getElementById('btnAdminLogout').onclick = () => {
     sessionStorage.removeItem('ep_admin');
     sessionStorage.removeItem('ep_admin_tab');
     sessionStorage.removeItem('ep_admin_token');
+    sessionStorage.removeItem('ep_admin_site');
     adminToken = null;
     window.location.reload();
 };
@@ -158,6 +188,9 @@ function getRetentionCutoff() {
     return d.toISOString().split('T')[0];
 }
 
+let _dashData = null;
+let _activePeriod = 'day';
+
 async function loadDashboard() {
     try {
         const cutoff = getRetentionCutoff();
@@ -165,63 +198,245 @@ async function loadDashboard() {
         const resp = await fetch(url, { headers: adminHeaders() });
         if (handleAuthError(resp)) return;
         if (!resp.ok) { console.error('Stats fetch failed:', resp.status); return; }
-        const data = await resp.json();
-        animateCounter(document.getElementById('statTotal'), data.total || 0);
-        animateCounter(document.getElementById('statToday'), data.today || 0);
-        animateCounter(document.getElementById('statWeek'), data.week || 0);
-        animateCounter(document.getElementById('statMonth'), data.month || 0);
+        _dashData = await resp.json();
 
-        // Update Labels with Actual Date/Month
-        const now = new Date();
-        const dateOptions = { day: 'numeric', month: 'short' };
-        const monthOptions = { month: 'long' };
-        document.getElementById('labelToday').textContent = `Today (${now.toLocaleDateString('en-US', dateOptions)})`;
-        document.getElementById('labelMonth').textContent = `${now.toLocaleDateString('en-US', monthOptions)} Total`;
-        const first = now.getDate() - now.getDay();
-        const firstDay = new Date(now.getFullYear(), now.getMonth(), first);
-        const lastDay = new Date(now.getFullYear(), now.getMonth(), first + 6);
-        document.getElementById('labelWeek').textContent = `Week (${firstDay.toLocaleDateString('en-US', { day: 'numeric', month: 'short' })} - ${lastDay.toLocaleDateString('en-US', { day: 'numeric', month: 'short' })})`;
-
-        renderBarChart('siteChartArea', data.bySite || {});
-        renderBarChart('contractorChartArea', data.byContractor || {});
-
-        // Show active retention window as a badge on the dashboard
+        // Retention badge
         const retention = localStorage.getItem('ep_retention') || '1m';
-        const labels = { '1d': '1 Day', '1w': '1 Week', '1m': '1 Month', '1y': '1 Year', 'all': 'All Time' };
-        let label = labels[retention] || (retention.startsWith('custom_') ? `Last ${retention.split('_')[1]} Days` : '1 Month');
+        const retLabels = { '1d': '1 Day', '1w': '1 Week', '1m': '1 Month', '1y': '1 Year', 'all': 'All Time' };
+        const retLabel = retLabels[retention] || (retention.startsWith('custom_') ? `Last ${retention.split('_')[1]} Days` : '1 Month');
         const badge = document.getElementById('retentionBadge');
-        if (badge) badge.textContent = `Showing: ${label}`;
+        if (badge) badge.textContent = `Showing: ${retLabel}`;
+
+        // Period tab wiring (only wire once, guard with flag)
+        if (!loadDashboard._wired) {
+            loadDashboard._wired = true;
+            const periodSelect = document.getElementById('dashPeriodSelect');
+            periodSelect.onchange = () => {
+                _activePeriod = periodSelect.value;
+                const datePicker = document.getElementById('dashDatePicker');
+                const monthPicker = document.getElementById('dashMonthPicker');
+                if (_activePeriod === 'date') {
+                    datePicker.style.display = '';
+                    monthPicker.style.display = 'none';
+                    if (!datePicker.value) {
+                        const t = new Date();
+                        // Use local date parts to avoid UTC offset shifting the day
+                        datePicker.value = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+                    }
+                } else if (_activePeriod === 'pickmonth') {
+                    datePicker.style.display = 'none';
+                    monthPicker.style.display = '';
+                    if (!monthPicker.value) {
+                        const t = new Date();
+                        monthPicker.value = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}`;
+                    }
+                } else {
+                    datePicker.style.display = 'none';
+                    monthPicker.style.display = 'none';
+                }
+                renderDashPeriod();
+            };
+            document.getElementById('dashDatePicker').onchange = () => renderDashPeriod();
+            document.getElementById('dashMonthPicker').onchange = () => renderDashPeriod();
+        }
+
+        renderDashStats();
+        renderDashPeriod();
+
+        // Site chart: super admin only
+        const siteChartCard = document.getElementById('siteChartCard');
+        const dashChartGrid = document.getElementById('dashChartGrid');
+        if (isSuperAdmin()) {
+            if (siteChartCard) siteChartCard.style.display = '';
+            if (dashChartGrid) dashChartGrid.classList.remove('chart-grid--single');
+            renderHorizontalChart('siteChartArea', _dashData.bySite || {}, 'siteChartSubtitle');
+        } else {
+            if (siteChartCard) siteChartCard.style.display = 'none';
+            if (dashChartGrid) dashChartGrid.classList.add('chart-grid--single');
+        }
+        renderHorizontalChart('contractorChartArea', _dashData.byContractor || {}, 'contractorChartSubtitle');
+
     } catch (err) { console.error('Dashboard load failed:', err); }
 }
 
-const BAR_GRADIENTS = [
-    ['#1a3c6e', '#2d5aa0'], ['#c8a45a', '#dab96e'], ['#10b981', '#34d399'],
-    ['#6366f1', '#818cf8'], ['#f59e0b', '#fbbf24'], ['#ef4444', '#f87171'],
-    ['#8b5cf6', '#a78bfa'], ['#ec4899', '#f472b6']
-];
+function renderDashStats() {
+    if (!_dashData) return;
+    animateCounter(document.getElementById('statTotal'), _dashData.total || 0);
 
-function renderBarChart(containerId, dataObj) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-    const entries = Object.entries(dataObj);
-    if (entries.length === 0) {
-        container.innerHTML = '<p style="color:var(--text-light); font-size:0.85rem; text-align:center; padding:3rem 0;">No data available</p>';
+    // Site count grid inside stat card — super admin only
+    const siteCountGrid = document.getElementById('siteCountGrid');
+    if (siteCountGrid && isSuperAdmin()) {
+        document.getElementById('siteCountCard').style.display = '';
+        renderSiteCountGrid(_dashData.bySite || {});
+    } else if (siteCountGrid) {
+        document.getElementById('siteCountCard').style.display = 'none';
+    }
+}
+
+function renderSiteCountGrid(bySite) {
+    const siteCountGrid = document.getElementById('siteCountGrid');
+    if (!siteCountGrid) return;
+    const entries = Object.entries(bySite).sort((a, b) => b[1] - a[1]);
+    if (entries.length) {
+        siteCountGrid.innerHTML = entries.map(([site, count]) => `
+            <div class="site-count-pill">
+                <span class="site-count-name">${esc(site)}</span>
+                <span class="site-count-num" id="siteCount-${esc(site)}">${count}</span>
+            </div>`).join('');
+    } else {
+        siteCountGrid.innerHTML = '<p style="color:var(--text-light);font-size:0.8rem;margin:0;">No data</p>';
+    }
+}
+
+async function renderDashPeriod() {
+    if (!_dashData) return;
+    const now = new Date();
+    const dateOpt = { day: 'numeric', month: 'short' };
+
+    if (_activePeriod === 'date') {
+        const picker = document.getElementById('dashDatePicker');
+        const picked = picker.value; // YYYY-MM-DD string, already timezone-safe
+        if (!picked) {
+            document.getElementById('labelPeriod').textContent = 'Selected Date';
+            document.getElementById('labelPeriodSub').textContent = 'Pick a date above';
+            document.getElementById('statPeriod').textContent = '—';
+            return;
+        }
+        // Build next day string without any Date object to avoid UTC shift
+        const [y, m, d] = picked.split('-').map(Number);
+        const nextDay = d + 1;
+        let toY = y, toM = m, toD = nextDay;
+        const daysInMonth = new Date(y, m, 0).getDate();
+        if (nextDay > daysInMonth) { toD = 1; toM = m + 1; if (toM > 12) { toM = 1; toY = y + 1; } }
+        const toStr = `${toY}-${String(toM).padStart(2,'0')}-${String(toD).padStart(2,'0')}`;
+        const cutoff = getRetentionCutoff();
+        const base = cutoff && cutoff > picked ? cutoff : picked;
+        try {
+            const resp = await fetch(`${API}/api/stats?from=${base}&to=${toStr}`, { headers: adminHeaders() });
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const [py, pm, pd] = picked.split('-').map(Number);
+            const label = new Date(py, pm - 1, pd).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+            document.getElementById('labelPeriod').textContent = 'Selected Date';
+            document.getElementById('labelPeriodSub').textContent = label;
+            animateCounter(document.getElementById('statPeriod'), data.total || 0);
+            if (isSuperAdmin()) renderSiteCountGrid(data.bySite || {});
+        } catch (e) { console.error(e); }
         return;
     }
-    const maxVal = Math.max(...entries.map(e => e[1]), 1);
+
+    if (_activePeriod === 'pickmonth') {
+        const picker = document.getElementById('dashMonthPicker');
+        const picked = picker.value; // YYYY-MM string
+        if (!picked) {
+            document.getElementById('labelPeriod').textContent = 'Selected Month';
+            document.getElementById('labelPeriodSub').textContent = 'Pick a month above';
+            document.getElementById('statPeriod').textContent = '—';
+            return;
+        }
+        const [y, m] = picked.split('-').map(Number);
+        // First day of selected month, first day of next month — pure string math, no UTC shift
+        const fromStr = `${y}-${String(m).padStart(2,'0')}-01`;
+        const nextM = m === 12 ? 1 : m + 1;
+        const nextY = m === 12 ? y + 1 : y;
+        const toStr = `${nextY}-${String(nextM).padStart(2,'0')}-01`;
+        const cutoff = getRetentionCutoff();
+        const base = cutoff && cutoff > fromStr ? cutoff : fromStr;
+        try {
+            const resp = await fetch(`${API}/api/stats?from=${base}&to=${toStr}`, { headers: adminHeaders() });
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const label = new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+            document.getElementById('labelPeriod').textContent = 'Selected Month';
+            document.getElementById('labelPeriodSub').textContent = label;
+            animateCounter(document.getElementById('statPeriod'), data.total || 0);
+            if (isSuperAdmin()) renderSiteCountGrid(data.bySite || {});
+        } catch (e) { console.error(e); }
+        return;
+    }
+
+    let value, periodLabel, subLabel;
+    if (_activePeriod === 'day') {
+        value = _dashData.today || 0;
+        periodLabel = 'Today';
+        subLabel = now.toLocaleDateString('en-US', dateOpt);
+    } else if (_activePeriod === 'week') {
+        value = _dashData.week || 0;
+        periodLabel = 'This Week';
+        const first = now.getDate() - now.getDay();
+        const d0 = new Date(now.getFullYear(), now.getMonth(), first);
+        const d1 = new Date(now.getFullYear(), now.getMonth(), first + 6);
+        subLabel = `${d0.toLocaleDateString('en-US', dateOpt)} – ${d1.toLocaleDateString('en-US', dateOpt)}`;
+    } else {
+        value = _dashData.month || 0;
+        periodLabel = 'This Month';
+        subLabel = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    }
+
+    document.getElementById('labelPeriod').textContent = periodLabel;
+    document.getElementById('labelPeriodSub').textContent = subLabel;
+    animateCounter(document.getElementById('statPeriod'), value);
+    if (isSuperAdmin()) renderSiteCountGrid(_dashData.bySite || {});
+}
+
+const CHART_COLORS = ['#1a3c6e', '#10b981', '#6366f1', '#f59e0b', '#ef4444', '#8b5cf6', '#c8a45a', '#ec4899'];
+const CHART_BG = ['#eef4ff', '#ecfdf5', '#eef2ff', '#fffbeb', '#fef2f2', '#f5f3ff', '#fdf8ee', '#fdf2f8'];
+
+function renderHorizontalChart(containerId, dataObj, subtitleId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    let entries = Object.entries(dataObj).sort((a, b) => b[1] - a[1]);
+    const MAX_SHOW = 8;
+    let othersCount = 0;
+    if (entries.length > MAX_SHOW) {
+        const rest = entries.slice(MAX_SHOW);
+        othersCount = rest.reduce((s, e) => s + e[1], 0);
+        entries = entries.slice(0, MAX_SHOW);
+    }
+    if (othersCount > 0) entries.push(['Others', othersCount]);
+
+    if (entries.length === 0) {
+        container.innerHTML = '<div class="hchart-empty">No data available for this period</div>';
+        if (subtitleId) document.getElementById(subtitleId).textContent = '0 records';
+        return;
+    }
+
     const total = entries.reduce((s, e) => s + e[1], 0);
-    container.innerHTML = `<div class="bar-chart">${entries.map(([label, value], i) => {
-        const [c1, c2] = BAR_GRADIENTS[i % BAR_GRADIENTS.length];
+    const maxVal = Math.max(...entries.map(e => e[1]), 1);
+    if (subtitleId) {
+        const el = document.getElementById(subtitleId);
+        if (el) el.textContent = `${total} total pass${total !== 1 ? 'es' : ''}`;
+    }
+
+    container.innerHTML = `<div class="hchart">${entries.map(([label, value], i) => {
         const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+        const barPct = maxVal > 0 ? ((value / maxVal) * 100).toFixed(1) : 0;
+        const color = CHART_COLORS[i % CHART_COLORS.length];
+        const bg = CHART_BG[i % CHART_BG.length];
         return `
-        <div class="bar-group">
-            <span class="bar-value">${value}</span>
-            <div class="bar" style="height: ${(value / maxVal) * 140}px; background: linear-gradient(180deg, ${c2}, ${c1});">
-                <div class="bar-tooltip">${esc(label)}: ${value} (${pct}%)</div>
+        <div class="hchart-row">
+            <div class="hchart-label" title="${esc(label)}">${esc(label)}</div>
+            <div class="hchart-track">
+                <div class="hchart-fill" style="width:${barPct}%; background:${color};" data-val="${value}"></div>
             </div>
-            <span class="bar-label">${esc(label)}</span>
+            <div class="hchart-meta">
+                <span class="hchart-count" style="color:${color};">${value}</span>
+                <span class="hchart-pct" style="background:${bg}; color:${color};">${pct}%</span>
+            </div>
         </div>`;
     }).join('')}</div>`;
+
+    // Animate bars in
+    requestAnimationFrame(() => {
+        container.querySelectorAll('.hchart-fill').forEach((el, i) => {
+            el.style.width = '0%';
+            setTimeout(() => {
+                el.style.transition = `width 0.55s cubic-bezier(0.4,0,0.2,1) ${i * 60}ms`;
+                el.style.width = el.dataset.val / maxVal * 100 + '%';
+            }, 30);
+        });
+    });
 }
 
 // ------ RECORDS ------
@@ -250,7 +465,7 @@ function renderRecordsTable(records) {
     if (!tbody) return;
     tbody.innerHTML = '';
     if (records.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="17" style="text-align:center; padding:2rem; color:var(--text-light);">No records found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="18" style="text-align:center; padding:2rem; color:var(--text-light);">No records found</td></tr>';
         return;
     }
     records.forEach((r) => {
@@ -261,23 +476,24 @@ function renderRecordsTable(records) {
         }
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td>${photoSrc ? `<img src="${esc(photoSrc)}" class="record-photo" alt="Photo" />` : 'N/A'}</td>
-            <td>${esc(r.fullName) || '---'}</td>
-            <td>${esc(r.aadhar) || '---'}</td>
-            <td>${esc(r.age) || '---'}</td>
-            <td>${esc(r.gender) || '---'}</td>
-            <td>${esc(formatDate(r.dob))}</td>
-            <td>${esc(r.bloodGroup) || '---'}</td>
-            <td>${esc(r.contractor) || '---'}</td>
-            <td>${esc(r.laborCamp) || '---'}</td>
-            <td>${esc(r.designation) || '---'}</td>
-            <td>${esc(r.contact) || '---'}</td>
-            <td>${esc(r.site) || 'EMPTY'}</td>
-            <td>${esc(r.operator) || 'EMPTY'}</td>
-            <td>${esc(formatDate(r.doi))}</td>
-            <td>${esc(formatDate(r.validity))}</td>
-            <td>${esc(formatDate(r.issueDate))}</td>
-            <td><button class="btn-delete" onclick="deleteRecord('${esc(r._id)}')">Delete</button></td>`;
+            <td class="record-photo-cell">${photoSrc ? `<img src="${esc(photoSrc)}" class="record-photo" alt="Photo" />` : '<span class="record-photo-empty">N/A</span>'}</td>
+            <td class="record-name-cell"><span class="record-name">${esc(r.fullName) || '---'}</span><span class="record-subtext">${esc(r.contact) || 'No contact'}</span></td>
+            <td class="record-mono">${esc(r.aadhar) || '---'}</td>
+            <td class="record-age">${esc(r.age) || '---'}</td>
+            <td><span class="record-pill record-pill--gender">${esc(r.gender) || '---'}</span></td>
+            <td class="record-muted">${esc(formatDate(r.dob))}</td>
+            <td><span class="record-pill record-pill--blood">${esc(r.bloodGroup) || '---'}</span></td>
+            <td class="record-strong">${esc(r.contractor) || '---'}</td>
+            <td><span class="record-pill record-pill--camp">${esc(r.laborCamp) || '---'}</span></td>
+            <td><span class="record-pill record-pill--designation">${esc(r.designation) || '---'}</span></td>
+            <td class="record-mono">${esc(r.contact) || '---'}</td>
+            <td><span class="record-pill record-pill--site">${esc(r.site) || 'EMPTY'}</span></td>
+            <td class="record-muted">${esc(r.operator) || 'EMPTY'}</td>
+            <td class="record-muted">${esc(formatDate(r.doi))}</td>
+            <td class="record-muted">${esc(formatDate(r.validity))}</td>
+            <td class="record-muted">${esc(formatDate(r.issueDate))}</td>
+            <td class="record-created">${formatDateTime(r.createdAt)}</td>
+            <td class="record-actions-cell"><button class="btn-delete" onclick="deleteRecord('${esc(r._id)}')">Delete</button></td>`;
         tbody.appendChild(tr);
     });
 }
@@ -292,6 +508,11 @@ async function loadRecords(from, to) {
         }
         if (from) params.push(`from=${from}`);
         if (to) params.push(`to=${to}`);
+        // Super admin: pass selected site filter; site admin: server enforces their site automatically
+        if (isSuperAdmin()) {
+            const selSite = document.getElementById('filterSite');
+            if (selSite && selSite.value) params.push(`site=${encodeURIComponent(selSite.value)}`);
+        }
         if (params.length) url += '?' + params.join('&');
         const resp = await fetch(url, { headers: adminHeaders() });
         if (handleAuthError(resp)) return;
@@ -317,43 +538,212 @@ document.getElementById('btnResetFilter').onclick = () => {
     document.getElementById('filterFrom').value = '';
     document.getElementById('filterTo').value = '';
     document.getElementById('sortRecords').value = 'latest';
+    const selSite = document.getElementById('filterSite');
+    if (selSite) selSite.value = '';
     loadRecords();
 };
 document.getElementById('sortRecords').onchange = sortAndRenderRecords;
-document.getElementById('btnExportExcel').onclick = () => {
-    const table = document.getElementById('recordsTable');
-    const rows = table.querySelectorAll('tr');
-    let csv = ''; rows.forEach(row => {
-        const cells = row.querySelectorAll('th, td');
-        const rowData = []; cells.forEach((cell, idx) => {
-            if (idx === 0 || idx === cells.length - 1) return;
-            rowData.push('"' + cell.textContent.replace(/"/g, '""').trim() + '"');
+// Admin export dropdown
+(function() {
+    const menu = document.getElementById('adminExportMenu');
+    const trigger = document.getElementById('btnAdminExport');
+
+    trigger.onclick = (e) => {
+        e.stopPropagation();
+        menu.classList.toggle('export-dropdown-menu--open');
+    };
+    document.addEventListener('click', () => menu.classList.remove('export-dropdown-menu--open'));
+
+    function x(v) { return (v || '---').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').trim(); }
+
+    function fmtTime(d) {
+        if (!d) return '---';
+        const dt = new Date(d);
+        if (isNaN(dt.getTime())) return '---';
+        let h = dt.getHours();
+        const m = String(dt.getMinutes()).padStart(2,'0');
+        const ap = h >= 12 ? 'PM' : 'AM';
+        h = h % 12 || 12;
+        return `${h}:${m} ${ap}`;
+    }
+
+    function getPhotoUrl(r) {
+        if (!r.photoPath) return '';
+        const p = r.photoPath.replace(/\\/g, '/');
+        return r.photoPath.startsWith('http') ? r.photoPath : `${API}/${p.startsWith('/') ? p.slice(1) : p}`;
+    }
+
+    function buildXLS(withPhoto) {
+        const headers = withPhoto
+            ? ['Photo URL','Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Created At']
+            : ['Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Created At'];
+
+        const rows = currentRecords.map(r => {
+            const row = {};
+            if (withPhoto) row['Photo URL'] = getPhotoUrl(r) || '---';
+            row['Name']         = r.fullName  || '---';
+            row['Aadhar']       = String(r.aadhar  || '---');
+            row['Age']          = r.age        || '---';
+            row['Gender']       = r.gender     || '---';
+            row['DOB']          = formatDate(r.dob);
+            row['Blood Group']  = r.bloodGroup || '---';
+            row['Contractor']   = r.contractor || '---';
+            row['Labor Camp']   = r.laborCamp  || '---';
+            row['Designation']  = r.designation|| '---';
+            row['Contact']      = String(r.contact || '---');
+            row['Site']         = r.site       || '---';
+            row['Operator']     = r.operator   || '---';
+            row['DOI']          = formatDate(r.doi);
+            row['Validity']     = formatDate(r.validity);
+            row['Issue Date']   = formatDate(r.issueDate);
+            row['Created At']   = fmtTime(r.createdAt);
+            return row;
         });
-        csv += rowData.join(',') + '\n';
-    });
-    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `EntryPass_Records_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-};
+
+        return { headers, rows };
+    }
+
+    function getDateStr() {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
+
+    function exportCleanXLSX(filename) {
+        // Without photos — real .xlsx via SheetJS, no warnings
+        const { headers, rows } = buildXLS(false);
+        const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
+        ws['!cols'] = headers.map(h => {
+            if (h === 'Name' || h === 'Contractor') return { wch: 22 };
+            if (h === 'Aadhar' || h === 'Contact')  return { wch: 16 };
+            if (h === 'Labor Camp' || h === 'Designation') return { wch: 18 };
+            return { wch: 12 };
+        });
+        rows.forEach((_, i) => {
+            ['Aadhar','Contact'].forEach(field => {
+                const ci = headers.indexOf(field);
+                if (ci < 0) return;
+                const ca = XLSX.utils.encode_cell({ r: i + 1, c: ci });
+                if (ws[ca]) ws[ca].t = 's';
+            });
+        });
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Records');
+        XLSX.writeFile(wb, filename);
+    }
+
+    async function exportWithPhotosHTML(filename) {
+        // With photos — fetch images via server proxy, embed as base64 in a self-contained HTML report
+        const btn = document.getElementById('btnAdminExportWithPhoto');
+        const origText = btn.textContent;
+        btn.textContent = 'Preparing…';
+        btn.disabled = true;
+
+        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Created At'];
+        const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
+        const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
+
+        async function fetchB64(url) {
+            if (!url) return null;
+            try {
+                const r = await fetch(`${API}/api/imgproxy?url=${encodeURIComponent(url)}`, { headers: adminHeaders() });
+                if (!r.ok) return null;
+                const j = await r.json();
+                return j.b64 ? `data:${j.ct};base64,${j.b64}` : null;
+            } catch { return null; }
+        }
+
+        const dataRows = await Promise.all(currentRecords.map(async (r, i) => {
+            const bg = i % 2 === 0 ? '#fff' : '#f8fafc';
+            const td = v => `<td style="padding:5px 9px;border:1px solid #e2e8f0;vertical-align:middle;font-size:10px;background:${bg};">${v||'---'}</td>`;
+            const b64 = await fetchB64(getPhotoUrl(r));
+            const imgCell = `<td style="padding:3px;border:1px solid #e2e8f0;text-align:center;vertical-align:middle;background:${bg};">${b64 ? `<img src="${b64}" width="48" height="48" style="border-radius:4px;display:block;" />` : '—'}</td>`;
+            return `<tr>
+                ${imgCell}
+                ${td(x(r.fullName))}
+                ${td(r.aadhar)}
+                ${td(r.age)}
+                ${td(x(r.gender))}
+                ${td(formatDate(r.dob))}
+                ${td(x(r.bloodGroup))}
+                ${td(x(r.contractor))}
+                ${td(x(r.laborCamp))}
+                ${td(x(r.designation))}
+                ${td(r.contact)}
+                ${td(x(r.site))}
+                ${td(x(r.operator))}
+                ${td(formatDate(r.doi))}
+                ${td(formatDate(r.validity))}
+                ${td(formatDate(r.issueDate))}
+                ${td(fmtTime(r.createdAt))}
+            </tr>`;
+        }));
+
+        const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>Entry Pass Records With Photos</title>
+<style>
+  body{font-family:Calibri,Arial,sans-serif;font-size:10px;margin:16px;}
+  table{border-collapse:collapse;width:100%;}
+  @media print{body{margin:0;}}
+</style></head><body>
+<h2 style="font-family:Arial;color:#1a3c6e;margin-bottom:12px;">Entry Pass Records — ${getDateStr()}</h2>
+<table><thead><tr>${header}</tr></thead><tbody>${dataRows.join('')}</tbody></table>
+</body></html>`;
+
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+
+        btn.textContent = origText;
+        btn.disabled = false;
+    }
+
+    document.getElementById('btnAdminExportNoPhoto').onclick = () => {
+        menu.classList.remove('export-dropdown-menu--open');
+        exportCleanXLSX(`EntryPass_Records_${getDateStr()}.xlsx`);
+    };
+
+    document.getElementById('btnAdminExportWithPhoto').onclick = () => {
+        menu.classList.remove('export-dropdown-menu--open');
+        exportWithPhotosHTML(`EntryPass_Records_WithPhotos_${getDateStr()}.html`);
+    };
+})();
 
 // ------ MANAGE (CRUD) ------
+function _manageSiteParam(key) {
+    if (key === 'sites') return '';
+    const site = getEffectiveSite();
+    return site ? `?site=${encodeURIComponent(site)}` : '';
+}
+
 async function getListAPI(key) {
     try {
-        const res = await fetch(`${API}/api/${key}`, { headers: adminHeaders() });
+        const res = await fetch(`${API}/api/${key}${_manageSiteParam(key)}`, { headers: adminHeaders() });
+        if (handleAuthError(res)) return [];
         return res.ok ? await res.json() : [];
     } catch (e) { console.error(e); return []; }
 }
 async function saveListAPI(key, arr) {
     try {
-        await fetch(`${API}/api/${key}`, {
+        const res = await fetch(`${API}/api/${key}${_manageSiteParam(key)}`, {
             method: 'POST',
             headers: adminHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ data: arr })
         });
-    } catch (e) { console.error(e); }
+        if (handleAuthError(res)) return false;
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            showAlert(body.error || 'Could not save changes. Please try again.');
+            return false;
+        }
+        return true;
+    } catch (e) {
+        console.error(e);
+        showAlert('Could not save changes. Check connection and try again.');
+        return false;
+    }
 }
 
 function toggleAddForm(key) {
@@ -366,22 +756,186 @@ function toggleAddForm(key) {
     if (isHidden) { const input = form.querySelector('input'); input.value = ''; input.focus(); }
 }
 
+// ── Drag-and-drop state ──────────────────────────────────────────────────────
+let _dragSrc = null;
+const _manageSelections = { contractors: new Set(), roles: new Set() };
+const _manageSelectMode = { contractors: false, roles: false };
+
+function _makeDraggable(ul, key, listId) {
+    ul.querySelectorAll('li[draggable="true"]').forEach(li => {
+        li.addEventListener('dragstart', e => {
+            if (e.target.closest('.manage-select-check')) {
+                e.preventDefault();
+                return;
+            }
+            _dragSrc = li;
+            li.classList.add('drag-active');
+            e.dataTransfer.effectAllowed = 'move';
+        });
+        li.addEventListener('dragend', () => {
+            li.classList.remove('drag-active');
+            ul.querySelectorAll('li').forEach(n => n.classList.remove('drag-over'));
+            _dragSrc = null;
+        });
+        li.addEventListener('dragover', e => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (_dragSrc && _dragSrc !== li) {
+                ul.querySelectorAll('li').forEach(n => n.classList.remove('drag-over'));
+                li.classList.add('drag-over');
+            }
+        });
+        li.addEventListener('dragleave', () => li.classList.remove('drag-over'));
+        li.addEventListener('drop', async e => {
+            e.preventDefault();
+            li.classList.remove('drag-over');
+            if (!_dragSrc || _dragSrc === li) return;
+            // Reorder in DOM
+            const allLi = [...ul.querySelectorAll('li[draggable="true"]')];
+            const fromIdx = allLi.indexOf(_dragSrc);
+            const toIdx   = allLi.indexOf(li);
+            if (fromIdx === -1 || toIdx === -1) return;
+            if (fromIdx < toIdx) li.after(_dragSrc);
+            else li.before(_dragSrc);
+            // Persist new order
+            const newOrder = [...ul.querySelectorAll('li[draggable="true"]')].map(n => n.dataset.value);
+            if (!(await saveListAPI(key, newOrder))) return renderManageList(key, listId);
+            showDragSaved(ul);
+        });
+    });
+}
+
+function showDragSaved(ul) {
+    let msg = ul.parentElement.querySelector('.drag-saved-msg');
+    if (!msg) return;
+    msg.textContent = '✓ Order saved';
+    msg.style.opacity = '1';
+    clearTimeout(msg._t);
+    msg._t = setTimeout(() => { msg.style.opacity = '0'; }, 1800);
+}
+
 async function renderManageList(key, listId) {
     const items = await getListAPI(key);
     const ul = document.getElementById(listId);
     if (!ul) return;
     ul.innerHTML = '';
+    const draggable = ul.classList.contains('manage-list--draggable');
+    const inSelectMode = _manageSelectMode[key];
+
+    // Prune stale selections
+    if (inSelectMode) {
+        const currentValues = new Set(items);
+        [..._manageSelections[key]].forEach(v => { if (!currentValues.has(v)) _manageSelections[key].delete(v); });
+    }
+
     items.forEach((item, idx) => {
         const li = document.createElement('li');
         li.id = `item-${key}-${idx}`;
-        li.innerHTML = `
-            <span class="item-text">${esc(item)}</span>
-            <div class="manage-actions">
-                <button class="btn-edit" onclick="startInlineEdit('${esc(key)}', ${idx}, '${esc(listId)}')">Edit</button>
-                <button class="btn-remove" onclick="confirmRemoveItem('${esc(key)}', ${idx}, '${esc(listId)}')">Del</button>
-            </div>`;
+        li.dataset.value = item;
+        li.dataset.idx = idx + 1;
+        if (inSelectMode) li.classList.add('select-mode');
+
+        const checked = inSelectMode && _manageSelections[key].has(item) ? ' checked' : '';
+        const checkbox = inSelectMode
+            ? `<input type="checkbox" class="manage-select-check"${checked} />`
+            : '';
+        const actions = inSelectMode ? '' : `<div class="manage-actions">
+            <button class="btn-edit" title="Edit" onclick="startInlineEdit('${esc(key)}', ${idx}, '${esc(listId)}')">✎</button>
+            <button class="btn-remove" title="Delete" onclick="confirmRemoveItem('${esc(key)}', ${idx}, '${esc(listId)}')">✕</button>
+        </div>`;
+
+        if (draggable && !inSelectMode) {
+            li.draggable = true;
+            li.innerHTML = `<span class="drag-handle" title="Drag to reorder">⠿</span>${checkbox}<span class="item-text">${esc(item)}</span>${actions}`;
+        } else {
+            li.innerHTML = `${checkbox}<span class="item-text">${esc(item)}</span>${actions}`;
+        }
+
+        if (inSelectMode) {
+            // Clicking anywhere on the row toggles selection
+            li.addEventListener('click', () => {
+                const chk = li.querySelector('.manage-select-check');
+                chk.checked = !chk.checked;
+                _toggleSelection(key, item, chk.checked);
+                _updateBulkToolbar(key, listId, items.length);
+            });
+            const chk = li.querySelector('.manage-select-check');
+            if (chk) {
+                chk.addEventListener('click', e => e.stopPropagation()); // handled by li click
+            }
+        }
+
         ul.appendChild(li);
     });
+
+    if (draggable && !inSelectMode) _makeDraggable(ul, key, listId);
+    _updateBulkToolbar(key, listId, items.length);
+}
+
+function _toggleSelection(key, value, checked) {
+    if (checked) _manageSelections[key].add(value);
+    else _manageSelections[key].delete(value);
+}
+
+function _updateBulkToolbar(key, listId, total) {
+    const selected = _manageSelections[key].size;
+    const countEl = document.getElementById(`bulkCount-${key}`);
+    const deleteBtn = document.getElementById(`btnBulkDelete-${key}`);
+    const selectAllChk = document.getElementById(`chkSelectAll-${key}`);
+    if (countEl) countEl.textContent = selected === 0 ? '0' : `${selected}/${total}`;
+    if (deleteBtn) deleteBtn.disabled = selected === 0;
+    if (selectAllChk) {
+        selectAllChk.checked = total > 0 && selected === total;
+        selectAllChk.indeterminate = selected > 0 && selected < total;
+    }
+}
+
+function toggleSelectMode(key, listId) {
+    _manageSelectMode[key] = !_manageSelectMode[key];
+    if (!_manageSelectMode[key]) _manageSelections[key].clear();
+
+    const toolbar = document.getElementById(`bulkToolbar-${key}`);
+    const btn = document.getElementById(`btnSelectMode-${key}`);
+    const addArea = document.getElementById(`addArea-${key}`);
+    if (toolbar) toolbar.style.display = _manageSelectMode[key] ? '' : 'none';
+    if (btn) btn.classList.toggle('active', _manageSelectMode[key]);
+    if (addArea) addArea.style.display = _manageSelectMode[key] ? 'none' : '';
+
+    renderManageList(key, listId);
+}
+
+function handleSelectAll(key, listId, checked) {
+    const ul = document.getElementById(listId);
+    if (!ul) return;
+    const items = [...ul.querySelectorAll('li[data-value]')].map(li => li.dataset.value);
+    _manageSelections[key].clear();
+    if (checked) items.forEach(v => _manageSelections[key].add(v));
+    // Update all checkboxes in the list
+    ul.querySelectorAll('.manage-select-check').forEach((chk, i) => {
+        chk.checked = checked;
+    });
+    _updateBulkToolbar(key, listId, items.length);
+}
+
+async function deleteSelectedManageItems(key, listId) {
+    if (!_manageSelections[key] || _manageSelections[key].size === 0) return;
+    const count = _manageSelections[key].size;
+    const label = key === 'roles' ? 'designation' : 'contractor';
+    const plural = count === 1 ? label : `${label}s`;
+    if (!(await showConfirm(`Permanently delete ${count} selected ${plural}?`))) return;
+    const selected = new Set(_manageSelections[key]);
+    const items = await getListAPI(key);
+    if (!(await saveListAPI(key, items.filter(item => !selected.has(item))))) return;
+    _manageSelections[key].clear();
+    // Exit select mode after deletion
+    _manageSelectMode[key] = false;
+    const toolbar = document.getElementById(`bulkToolbar-${key}`);
+    const btn = document.getElementById(`btnSelectMode-${key}`);
+    const addArea = document.getElementById(`addArea-${key}`);
+    if (toolbar) toolbar.style.display = 'none';
+    if (btn) btn.classList.remove('active');
+    if (addArea) addArea.style.display = '';
+    renderManageList(key, listId);
 }
 
 function startInlineEdit(key, idx, listId) {
@@ -390,7 +944,7 @@ function startInlineEdit(key, idx, listId) {
     const originalVal = span.textContent;
     li.innerHTML = `
         <input type="text" class="inline-edit-input" value="${esc(originalVal)}" />
-        <div class="manage-actions">
+        <div class="manage-actions" style="opacity:1;">
             <button class="btn btn-primary btn-sm btn-save-inline">Save</button>
             <button class="btn btn-secondary btn-sm btn-cancel-inline">Cancel</button>
         </div>`;
@@ -407,15 +961,17 @@ async function saveInlineEdit(key, idx, listId, newVal, oldVal) {
     newVal = newVal.trim();
     if (!newVal || newVal === oldVal) return renderManageList(key, listId);
     const items = await getListAPI(key);
-    items[idx] = newVal; await saveListAPI(key, items);
-    document.getElementById(`item-${key}-${idx}`).innerHTML = `<span class="inline-edit-success">✓ Updated</span><span class="item-text" style="font-weight:700;">${esc(newVal)}</span>`;
+    items[idx] = newVal;
+    if (!(await saveListAPI(key, items))) return renderManageList(key, listId);
+    document.getElementById(`item-${key}-${idx}`).innerHTML = `<span class="item-text" style="font-weight:700;">${esc(newVal)}</span><span class="inline-edit-success">✓ Updated</span>`;
     setTimeout(() => renderManageList(key, listId), 2000);
 }
 
 async function confirmRemoveItem(key, idx, listId) {
     const items = await getListAPI(key);
     if (await showConfirm(`Delete "${items[idx]}" permanently?`)) {
-        items.splice(idx, 1); await saveListAPI(key, items);
+        items.splice(idx, 1);
+        if (!(await saveListAPI(key, items))) return;
         document.getElementById(`item-${key}-${idx}`).innerHTML = `<div class="delete-success-msg">✓ Deleted successfully</div>`;
         setTimeout(() => renderManageList(key, listId), 2000);
     }
@@ -427,17 +983,116 @@ async function addItem(key, inputId, listId) {
     if (!val) return;
     const items = await getListAPI(key);
     if (items.includes(val)) return showAlert('Item already exists.');
-    items.push(val); await saveListAPI(key, items);
+    items.push(val);
+    if (!(await saveListAPI(key, items))) return;
     toggleAddForm(key);
     const area = document.getElementById(`addArea-${key}`);
     const success = area.querySelector('.add-success-msg');
     success.textContent = '✓ Added successfully';
     renderManageList(key, listId);
+    if (key === 'sites' && isSuperAdmin()) buildSiteSelector();
     setTimeout(() => success.textContent = '', 3000);
 }
 
+async function sortListAlpha(key, listId) {
+    const items = await getListAPI(key);
+    const sorted = [...items].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    if (!(await saveListAPI(key, sorted))) return;
+    renderManageList(key, listId);
+}
+
+// ── Super-admin site selector ────────────────────────────────────────────────
+// Which site the super admin is currently editing (null = their own / site admin's site)
+let _manageSite = null;
+
+let _knownSites = ['Udyan', 'Vyoma'];
+
+function getEffectiveSite() {
+    // Site admin: always their own site (from session)
+    if (!isSuperAdmin()) return getAdminSite();
+    // Super admin: whichever tab they selected
+    return _manageSite;
+}
+
+async function buildSiteSelector() {
+    const bar = document.getElementById('manageSiteBar');
+    const tabs = document.getElementById('manageSiteTabs');
+    if (!bar || !tabs) return;
+    const sites = await getListAPI('sites');
+    if (sites.length) _knownSites = sites;
+    if (!_knownSites.includes(_manageSite)) _manageSite = _knownSites[0] || null;
+    bar.style.display = '';
+    tabs.innerHTML = '';
+    _knownSites.forEach(site => {
+        const btn = document.createElement('button');
+        btn.className = 'manage-site-tab' + (site === _manageSite ? ' active' : '');
+        btn.textContent = site;
+        btn.onclick = () => selectManageSite(site);
+        tabs.appendChild(btn);
+    });
+}
+
+async function renderManageSiteScopedLists(site, showTransition = true) {
+    _manageSite = site;
+    document.querySelectorAll('.manage-site-tab').forEach(b => {
+        b.classList.toggle('active', b.textContent === site);
+    });
+    const grid = document.getElementById('manageGrid');
+    const bar = document.getElementById('manageSiteBar');
+    if (showTransition && grid) {
+        grid.classList.add('manage-grid--switching');
+        grid.setAttribute('aria-busy', 'true');
+    }
+    if (showTransition && bar) {
+        bar.classList.add('manage-site-bar--switching');
+        bar.dataset.switchingSite = `Switching to ${site}`;
+    }
+    const minimumSwitchTime = new Promise(resolve => setTimeout(resolve, 850));
+    const tasks = [
+        renderManageList('contractors', 'contractorList'),
+        renderManageList('roles', 'roleList')
+    ];
+    if (showTransition) tasks.unshift(minimumSwitchTime);
+    await Promise.all(tasks);
+    if (grid) {
+        grid.classList.remove('manage-grid--switching');
+        grid.removeAttribute('aria-busy');
+    }
+    if (bar) {
+        bar.classList.remove('manage-site-bar--switching');
+        delete bar.dataset.switchingSite;
+    }
+}
+
+async function selectManageSite(site) {
+    // Exit select mode when switching or refreshing sites
+    ['contractors', 'roles'].forEach(key => {
+        if (_manageSelectMode[key]) toggleSelectMode(key, key === 'contractors' ? 'contractorList' : 'roleList');
+    });
+    await renderManageSiteScopedLists(site, true);
+}
+
 async function loadManageLists() {
-    await renderManageList('sites', 'siteList');
+    const superAdmin = isSuperAdmin();
+    const siteCard = document.getElementById('siteManageCard');
+    const manageGrid = document.getElementById('manageGrid');
+    if (superAdmin) {
+        // Default to first site if none selected
+        if (!_manageSite) _manageSite = _knownSites[0];
+        if (siteCard) siteCard.style.display = '';
+        if (manageGrid) manageGrid.classList.remove('manage-grid--two');
+        await buildSiteSelector();
+        await renderManageList('sites', 'siteList');
+        if (_manageSite) {
+            await renderManageSiteScopedLists(_manageSite, true);
+        }
+        return;
+    } else {
+        const bar = document.getElementById('manageSiteBar');
+        if (bar) bar.style.display = 'none';
+        if (siteCard) siteCard.style.display = 'none';
+        if (manageGrid) manageGrid.classList.add('manage-grid--two');
+    }
     await renderManageList('contractors', 'contractorList');
     await renderManageList('roles', 'roleList');
 }
