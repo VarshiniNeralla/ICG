@@ -564,14 +564,11 @@ document.getElementById('sortRecords').onchange = sortAndRenderRecords;
         if (!d) return '---';
         const dt = new Date(d);
         if (isNaN(dt.getTime())) return '---';
-        const day = String(dt.getDate()).padStart(2,'0');
-        const mon = String(dt.getMonth()+1).padStart(2,'0');
-        const yr = dt.getFullYear();
         let h = dt.getHours();
         const m = String(dt.getMinutes()).padStart(2,'0');
         const ap = h >= 12 ? 'PM' : 'AM';
         h = h % 12 || 12;
-        return `${day}-${mon}-${yr} ${h}:${m} ${ap}`;
+        return `${h}:${m} ${ap}`;
     }
 
     function getPhotoUrl(r) {
