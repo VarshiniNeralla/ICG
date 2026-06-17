@@ -546,8 +546,12 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
             if (req.query.to)   { const d = new Date(req.query.to);   if (!isNaN(d.getTime())) createdAt.$lt  = d; }
             if (Object.keys(createdAt).length) baseFilter.createdAt = createdAt;
         }
-        // Site-restricted admin — lock stats to their site
-        if (req.userSession.site) baseFilter.site = req.userSession.site;
+        // Site-restricted admin — lock stats to their site; super admin can pass ?site= to filter
+        if (req.userSession.site) {
+            baseFilter.site = req.userSession.site;
+        } else if (req.query.site) {
+            baseFilter.site = req.query.site;
+        }
 
         const toClamp = baseFilter.createdAt && baseFilter.createdAt.$lt ? { $lt: baseFilter.createdAt.$lt } : {};
         const [total, today, week, month] = await Promise.all([

@@ -192,6 +192,7 @@ let _dashData = null;
 let _activePeriod = 'day';
 
 async function loadDashboard() {
+    _contractorSiteFilter = null;
     try {
         const cutoff = getRetentionCutoff();
         const url = cutoff ? `${API}/api/stats?from=${cutoff}` : `${API}/api/stats`;
@@ -250,6 +251,7 @@ async function loadDashboard() {
             if (siteChartCard) siteChartCard.style.display = '';
             if (dashChartGrid) dashChartGrid.classList.remove('chart-grid--single');
             renderHorizontalChart('siteChartArea', _dashData.bySite || {}, 'siteChartSubtitle');
+            buildContractorSiteFilter(_dashData.bySite || {});
         } else {
             if (siteChartCard) siteChartCard.style.display = 'none';
             if (dashChartGrid) dashChartGrid.classList.add('chart-grid--single');
@@ -286,6 +288,49 @@ function renderSiteCountGrid(bySite) {
     } else {
         siteCountGrid.innerHTML = '<p style="color:var(--text-light);font-size:0.8rem;margin:0;">No data</p>';
     }
+}
+
+let _contractorSiteFilter = null; // null = all sites
+
+function buildContractorSiteFilter(bySite) {
+    const wrap = document.getElementById('contractorSiteFilter');
+    if (!wrap) return;
+    const sites = Object.keys(bySite).sort();
+    if (sites.length < 2) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'flex';
+    const render = () => {
+        wrap.innerHTML = [null, ...sites].map(s => {
+            const active = _contractorSiteFilter === s;
+            const label = s === null ? 'All' : s;
+            return `<button type="button"
+                style="padding:0.22rem 0.65rem;border-radius:20px;font-size:0.68rem;font-weight:700;font-family:inherit;cursor:pointer;border:1.5px solid ${active ? 'var(--primary)' : 'var(--border)'};background:${active ? 'var(--primary)' : '#fff'};color:${active ? '#fff' : 'var(--text-light)'};transition:all 0.15s;"
+                onclick="selectContractorSite(${s === null ? 'null' : `'${s}'`})">${esc(label)}</button>`;
+        }).join('');
+    };
+    render();
+    wrap._render = render;
+}
+
+async function selectContractorSite(site) {
+    _contractorSiteFilter = site;
+    const wrap = document.getElementById('contractorSiteFilter');
+    if (wrap && wrap._render) wrap._render();
+    if (!site) {
+        renderHorizontalChart('contractorChartArea', _dashData.byContractor || {}, 'contractorChartSubtitle');
+        document.getElementById('contractorChartSubtitle').textContent = 'All records';
+        return;
+    }
+    document.getElementById('contractorChartSubtitle').textContent = 'Loading…';
+    try {
+        const cutoff = getRetentionCutoff();
+        const params = new URLSearchParams({ site });
+        if (cutoff) params.set('from', cutoff);
+        const resp = await fetch(`${API}/api/stats?${params}`, { headers: adminHeaders() });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        renderHorizontalChart('contractorChartArea', data.byContractor || {}, 'contractorChartSubtitle');
+        document.getElementById('contractorChartSubtitle').textContent = `${site} — ${data.total || 0} records`;
+    } catch (e) { console.error(e); }
 }
 
 async function renderDashPeriod() {
@@ -520,6 +565,14 @@ async function loadRecords(from, to) {
         const result = await resp.json();
         currentRecords = result.data || result;
         sortAndRenderRecords();
+        const badge = document.getElementById('recordsCountBadge');
+        if (badge) {
+            const total = result.total ?? currentRecords.length;
+            const site = isSuperAdmin() ? (document.getElementById('filterSite')?.value || '') : getAdminSite();
+            const siteLabel = site ? ` · ${site}` : '';
+            badge.textContent = `${total} ${total === 1 ? 'record' : 'records'}${siteLabel}`;
+            badge.style.display = '';
+        }
     } catch (err) { console.error('Records load failed:', err); }
 }
 
