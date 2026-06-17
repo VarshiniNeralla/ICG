@@ -1668,6 +1668,8 @@
         if (!site) return;
 
         document.getElementById('siteRecordsTitle').innerHTML = `${esc(site)} | Op: <strong>${esc(operator.name)}</strong>`;
+        const countBadge = document.getElementById('siteRecordsCount');
+        if (countBadge) { countBadge.style.display = 'none'; countBadge.textContent = ''; }
         document.getElementById('recordsModal').style.display = 'flex';
         const tbody = document.getElementById('siteRecordsBody');
         tbody.innerHTML = '<tr><td colspan="14" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
@@ -1680,6 +1682,11 @@
             const result = await resp.json();
             const records = result.data || result;
             tbody.innerHTML = '';
+
+            if (countBadge) {
+                countBadge.textContent = `${records.length} ${records.length === 1 ? 'employee' : 'employees'}`;
+                countBadge.style.display = '';
+            }
 
             if (records.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="14" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
