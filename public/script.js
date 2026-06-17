@@ -115,7 +115,6 @@
     let _portraitLastValidMaskCanvas = null;
     let portraitSegmentationInFlight = false;
     /** Single blit to preview canvas reduces visible tearing vs painting bokeh directly on the live canvas. */
-    let _portraitBlurStageCanvas = null;
     let portraitPreviewNextAllowed = 0;
     /** Target max dimension (px) for segmentation input; adapted down on slow frames. */
     let portraitSegMaxDim = 896;
@@ -780,7 +779,7 @@
 
     /**
      * Renders one frame from video onto destCanvas.
-     * @returns {Promise<boolean>} true if blur/solid portrait effect was applied; false for natural or fallback.
+     * @returns {Promise<boolean>} true if studio portrait effect was applied; false for natural or fallback.
      */
     function ensureCanvasSize(canvas, tw, th) {
         if (!canvas || tw < 2 || th < 2) return false;
@@ -1098,20 +1097,6 @@
             resetCtx2d(ctx);
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, w, h);
-        } else if (mode === 'blur') {
-            if (!_portraitBlurStageCanvas) _portraitBlurStageCanvas = document.createElement('canvas');
-            ensureCanvasSize(_portraitBlurStageCanvas, w, h);
-            const bctx = _portraitBlurStageCanvas.getContext('2d', { alpha: false });
-            resetCtx2d(bctx);
-            bctx.clearRect(0, 0, w, h);
-            bctx.imageSmoothingEnabled = true;
-            bctx.imageSmoothingQuality = 'low';
-            const fullBlurPx = quality === 'capture' ? 12 : 11;
-            bctx.filter = `blur(${fullBlurPx}px)`;
-            bctx.drawImage(videoEl, 0, 0, w, h);
-            bctx.filter = 'none';
-            resetCtx2d(ctx);
-            ctx.drawImage(_portraitBlurStageCanvas, 0, 0, w, h);
         } else if (mode === 'solid') {
             resetCtx2d(ctx);
             fillStudioBackdropGradient(ctx, w, h);
@@ -1121,12 +1106,12 @@
             ctx.drawImage(videoEl, 0, 0, w, h);
         }
 
-        if (mode === 'blur' || mode === 'solid') {
+        if (mode === 'solid') {
             schedulePortraitMaskUpdate(videoEl, quality, w, h);
         }
 
         const lastMask = getPortraitLastValidMaskForSize(w, h);
-        const usePortraitFg = (mode === 'blur' || mode === 'solid') && lastMask;
+        const usePortraitFg = mode === 'solid' && lastMask;
 
         if (usePortraitFg) {
             resetCtx2d(fgX);
@@ -1139,13 +1124,13 @@
             resetCtx2d(ctx);
             ctx.globalCompositeOperation = 'source-over';
             ctx.drawImage(fgC, 0, 0, w, h);
-        } else if (mode === 'blur' || mode === 'solid') {
+        } else if (mode === 'solid') {
             resetCtx2d(ctx);
             ctx.globalCompositeOperation = 'source-over';
             ctx.drawImage(videoEl, 0, 0, w, h);
         }
 
-        if (portraitDebugMaskEnabled() && lastMask && (mode === 'blur' || mode === 'solid')) {
+        if (portraitDebugMaskEnabled() && lastMask && mode === 'solid') {
             resetCtx2d(ctx);
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, w, h);
@@ -2013,7 +1998,7 @@
                     cancelPortraitPreviewLoop();
                     return;
                 }
-                /* Blur ↔ studio share the same segmenter; restarting the loop cancelled VFC and re-hid video — felt like a long pause */
+                /* Studio background uses segmenter; restarting the loop cancelled VFC and re-hid video — felt like a long pause */
                 if (portraitPreviewActive && photoPortraitSegmenter) {
                     portraitPreviewNextAllowed = 0;
                     if (!portraitPreviewProcessing) {
