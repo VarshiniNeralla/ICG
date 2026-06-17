@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const cloudinary = require('cloudinary').v2;
+const https = require('https');
 // Inline security headers (replaces helmet — avoids npm install issues on restricted networks)
 function inlineHelmet(options = {}) {
     return (req, res, next) => {
@@ -487,7 +488,9 @@ app.get('/api/employees', requireAuth, async (req, res) => {
 // DELETE single employee (admin only)
 app.delete('/api/employees/:id', requireAdmin, async (req, res) => {
     try {
-        const deleted = await Employee.findByIdAndDelete(req.params.id);
+        const filter = { _id: req.params.id };
+        if (req.userSession.site) filter.site = req.userSession.site;
+        const deleted = await Employee.findOneAndDelete(filter);
         if (!deleted) return res.status(404).json({ error: 'Record not found' });
 
         // Audit trail
@@ -505,10 +508,14 @@ app.get('/api/imgproxy', requireAuth, async (req, res) => {
         return res.status(400).json({ error: 'Invalid URL' });
     }
     try {
-        const https = require('https');
         const chunks = [];
+        let ct = 'image/jpeg';
         await new Promise((resolve, reject) => {
             https.get(url, (r) => {
+                if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+                    return reject(new Error('Redirect not followed'));
+                }
+                ct = r.headers['content-type'] || 'image/jpeg';
                 r.on('data', c => chunks.push(c));
                 r.on('end', resolve);
                 r.on('error', reject);
@@ -516,7 +523,6 @@ app.get('/api/imgproxy', requireAuth, async (req, res) => {
         });
         const buf = Buffer.concat(chunks);
         const b64 = buf.toString('base64');
-        const ct = 'image/jpeg';
         res.json({ b64, ct });
     } catch (e) {
         res.status(500).json({ error: 'Fetch failed' });
@@ -562,8 +568,8 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
         ];
 
         const [byContractor, bySite] = await Promise.all([
-            Employee.aggregate(byContractorPipeline).option({ maxTimeMS: 5000 }),
-            Employee.aggregate(bySitePipeline).option({ maxTimeMS: 5000 })
+            Employee.aggregate(byContractorPipeline, { maxTimeMS: 5000 }),
+            Employee.aggregate(bySitePipeline, { maxTimeMS: 5000 })
         ]);
 
         const formatGroup = (arr) => {

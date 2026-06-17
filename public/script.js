@@ -1433,6 +1433,23 @@
         }, 5000);
     }
 
+    function _saveLocalRecord(data) {
+        const key = `ep_local_records_${operator.site}`;
+        let existing = [];
+        try { existing = JSON.parse(localStorage.getItem(key) || '[]'); } catch { existing = []; }
+        existing.push({ ...data, _savedAt: new Date().toISOString(), _local: true });
+        try { localStorage.setItem(key, JSON.stringify(existing)); } catch (e) { console.warn('localStorage full, cannot save local record:', e); }
+    }
+
+    function _getLocalRecords() {
+        const key = `ep_local_records_${operator.site}`;
+        try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; }
+    }
+
+    function _clearLocalRecords() {
+        localStorage.removeItem(`ep_local_records_${operator.site}`);
+    }
+
     async function saveToBackend() {
         if (isSaving || isSaved) return;
         isSaving = true;
@@ -1441,6 +1458,8 @@
         data.photoPath = capturedCloudDataURL || capturedPhotoDataURL;
         data.site = operator.site || '';
         data.operator = operator.name || '';
+
+        _saveLocalRecord(data);
 
         console.log('--- Submission Request Start ---');
         console.log('Sending data to backend for:', data.fullName);
@@ -1695,6 +1714,15 @@
 
             _siteRecordsCache = records;
 
+            // Prune local records whose aadhar now exists on the server (successfully synced)
+            const serverAadhars = new Set(records.map(r => r.aadhar));
+            const key = `ep_local_records_${operator.site}`;
+            try {
+                const local = JSON.parse(localStorage.getItem(key) || '[]');
+                const remaining = local.filter(r => !serverAadhars.has(r.aadhar));
+                if (remaining.length !== local.length) localStorage.setItem(key, JSON.stringify(remaining));
+            } catch { /* ignore */ }
+
             records.forEach(r => {
                 const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API_BASE}/${r.photoPath.replace(/\\/g, '/')}`) : '';
                 const tr = document.createElement('tr');
@@ -1728,9 +1756,21 @@
 
     function exportSiteToExcel() { exportSiteXLS(false); }
 
+    function _mergeWithLocalRecords(serverRecords) {
+        const local = _getLocalRecords();
+        if (!local.length) return serverRecords;
+        const serverAadhars = new Set(serverRecords.map(r => r.aadhar));
+        const unsaved = local.filter(r => !serverAadhars.has(r.aadhar));
+        if (unsaved.length > 0) {
+            showToast(`ℹ ${unsaved.length} local record(s) not yet synced to server included in export.`, 'warning');
+        }
+        return [...serverRecords, ...unsaved];
+    }
+
     function exportSiteXLS(withImages) {
         const headers = ['Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date'];
-        const rows = _siteRecordsCache.map(r => {
+        const allRecords = _mergeWithLocalRecords(_siteRecordsCache);
+        const rows = allRecords.map(r => {
             const row = {};
             row['Name']        = r.fullName   || '---';
             row['Aadhar']      = String(r.aadhar  || '---');
@@ -1787,11 +1827,17 @@
         const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
         const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
 
-        const dataRows = await Promise.all(_siteRecordsCache.map(async (r, i) => {
+        const allRecordsWithPhotos = _mergeWithLocalRecords(_siteRecordsCache);
+        const dataRows = await Promise.all(allRecordsWithPhotos.map(async (r, i) => {
             const bg = i % 2 === 0 ? '#fff' : '#f8fafc';
             const td = v => `<td style="padding:5px 9px;border:1px solid #e2e8f0;vertical-align:middle;font-size:10px;background:${bg};">${v||'---'}</td>`;
-            const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API_BASE}/${r.photoPath.replace(/\\/g,'/')}`) : '';
-            const b64 = await fetchB64(photoSrc);
+            let b64 = null;
+            if (r._local && r.photoPath && r.photoPath.startsWith('data:')) {
+                b64 = r.photoPath;
+            } else {
+                const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API_BASE}/${r.photoPath.replace(/\\/g,'/')}`) : '';
+                b64 = await fetchB64(photoSrc);
+            }
             const imgCell = `<td style="padding:3px;border:1px solid #e2e8f0;text-align:center;vertical-align:middle;background:${bg};">${b64 ? `<img src="${b64}" width="48" height="48" style="border-radius:4px;display:block;" />` : '—'}</td>`;
             return `<tr>
                 ${imgCell}
@@ -1881,7 +1927,7 @@
             const mm = String(now.getMinutes()).padStart(2, '0');
             if (`${hh}:${mm}` === saved) {
                 const lastRun = localStorage.getItem(getScheduleKey() + '_lastRun');
-                const today = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+                const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
                 if (lastRun === today) return;
                 localStorage.setItem(getScheduleKey() + '_lastRun', today);
                 exportSiteToExcel();
@@ -2028,8 +2074,8 @@
         };
 
         btnGenerate.onclick = async () => {
-            const v1 = validateStep(1); if (v1 !== true) return (goToStep(1), showAlert(v1));
-            const v2 = validateStep(2); if (v2 !== true) return (goToStep(2), showAlert(v2));
+            if (!validateStep(1)) return (goToStep(1), showAlert('Please fix the errors in Step 1 before generating.'));
+            if (!validateStep(2)) return (goToStep(2), showAlert('Please fix the errors in Step 2 before generating.'));
             if (!capturedPhotoDataURL) return showAlert("Photo required.");
 
             btnGenerate.disabled = true;

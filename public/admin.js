@@ -527,10 +527,14 @@ async function deleteRecord(id) {
     const confirmed = await showConfirm('Delete this record permanently? This action cannot be undone.');
     if (!confirmed) return;
     try {
-        await fetch(`${API}/api/employees/${id}`, { method: 'DELETE', headers: adminHeaders() });
+        const resp = await fetch(`${API}/api/employees/${id}`, { method: 'DELETE', headers: adminHeaders() });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            return showAlert(err.error || 'Delete failed. Please try again.');
+        }
         showAlert('Record deleted successfully.');
         loadRecords();
-    } catch (err) { console.error('Delete failed:', err); }
+    } catch (err) { console.error('Delete failed:', err); showAlert('Network error. Please try again.'); }
 }
 
 document.getElementById('btnApplyFilter').onclick = () => loadRecords(document.getElementById('filterFrom').value, document.getElementById('filterTo').value);
@@ -560,11 +564,14 @@ document.getElementById('sortRecords').onchange = sortAndRenderRecords;
         if (!d) return '---';
         const dt = new Date(d);
         if (isNaN(dt.getTime())) return '---';
+        const day = String(dt.getDate()).padStart(2,'0');
+        const mon = String(dt.getMonth()+1).padStart(2,'0');
+        const yr = dt.getFullYear();
         let h = dt.getHours();
         const m = String(dt.getMinutes()).padStart(2,'0');
         const ap = h >= 12 ? 'PM' : 'AM';
         h = h % 12 || 12;
-        return `${h}:${m} ${ap}`;
+        return `${day}-${mon}-${yr} ${h}:${m} ${ap}`;
     }
 
     function getPhotoUrl(r) {
