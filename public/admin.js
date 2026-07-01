@@ -763,6 +763,10 @@ async function fetchAllRecords(from, to) {
 }
 
 async function loadRecords(from, to, opts = {}) {
+    // Capture the site filter that is actually being applied to THIS fetch, before the
+    // await — if the admin changes the dropdown while the request is in flight, the badge
+    // must still reflect what was queried, not whatever the dropdown shows when it resolves.
+    const appliedSite = isSuperAdmin() ? (document.getElementById('filterSite')?.value || '') : getAdminSite();
     try {
         const records = await fetchAllRecords(from, to);
         if (records === null) return; // auth error already handled
@@ -772,8 +776,7 @@ async function loadRecords(from, to, opts = {}) {
         const badge = document.getElementById('recordsCountBadge');
         if (badge) {
             const total = currentRecords.length;
-            const site = isSuperAdmin() ? (document.getElementById('filterSite')?.value || '') : getAdminSite();
-            const siteLabel = site ? ` · ${site}` : '';
+            const siteLabel = appliedSite ? ` · ${appliedSite}` : '';
             badge.textContent = `${total} ${total === 1 ? 'record' : 'records'}${siteLabel}`;
             badge.style.display = '';
         }
@@ -795,6 +798,7 @@ async function deleteRecord(id) {
 }
 
 document.getElementById('btnApplyFilter').onclick = () => loadRecords(document.getElementById('filterFrom').value, document.getElementById('filterTo').value);
+document.getElementById('filterSite').onchange = () => loadRecords(document.getElementById('filterFrom').value, document.getElementById('filterTo').value);
 document.getElementById('btnResetFilter').onclick = () => {
     document.getElementById('filterFrom').value = '';
     document.getElementById('filterTo').value = '';
