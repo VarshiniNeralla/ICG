@@ -605,6 +605,9 @@ function renderDonutChart(containerId, dataObj, subtitleId) {
 
 // ------ RECORDS ------
 let currentRecords = [];
+let currentSortedRecords = [];
+let currentPage = 1;
+const RECORDS_PER_PAGE = 7;
 
 function sortAndRenderRecords() {
     const sortKey = document.getElementById('sortRecords').value;
@@ -621,7 +624,63 @@ function sortAndRenderRecords() {
         case 'site': sorted.sort((a, b) => (a.site || '').localeCompare(b.site || '')); break;
         case 'camp': sorted.sort((a, b) => (a.laborCamp || '').localeCompare(b.laborCamp || '')); break;
     }
-    renderRecordsTable(sorted);
+    currentSortedRecords = sorted;
+    const totalPages = Math.max(1, Math.ceil(sorted.length / RECORDS_PER_PAGE));
+    if (currentPage > totalPages) currentPage = totalPages;
+    if (currentPage < 1) currentPage = 1;
+    renderRecordsPage();
+}
+
+function renderRecordsPage() {
+    const totalPages = Math.max(1, Math.ceil(currentSortedRecords.length / RECORDS_PER_PAGE));
+    const start = (currentPage - 1) * RECORDS_PER_PAGE;
+    const pageRecords = currentSortedRecords.slice(start, start + RECORDS_PER_PAGE);
+    renderRecordsTable(pageRecords);
+    renderPaginationControls(totalPages);
+}
+
+function goToRecordsPage(page) {
+    const totalPages = Math.max(1, Math.ceil(currentSortedRecords.length / RECORDS_PER_PAGE));
+    currentPage = Math.min(Math.max(1, page), totalPages);
+    renderRecordsPage();
+    document.getElementById('recordsTable')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderPaginationControls(totalPages) {
+    const wrap = document.getElementById('recordsPagination');
+    const info = document.getElementById('recordsPaginationInfo');
+    const controls = document.getElementById('recordsPaginationControls');
+    if (!wrap || !info || !controls) return;
+
+    const total = currentSortedRecords.length;
+    if (total === 0) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'flex';
+
+    const start = (currentPage - 1) * RECORDS_PER_PAGE + 1;
+    const end = Math.min(currentPage * RECORDS_PER_PAGE, total);
+    info.textContent = `Showing ${start}–${end} of ${total} records`;
+
+    // Compact page-number list: first, last, current ±1, with ellipses for gaps.
+    const pages = [];
+    for (let p = 1; p <= totalPages; p++) {
+        if (p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1) pages.push(p);
+        else if (pages[pages.length - 1] !== '…') pages.push('…');
+    }
+
+    const btn = (label, page, opts = {}) => `<button type="button" class="pg-btn${opts.active ? ' pg-btn--active' : ''}"
+        ${opts.disabled ? 'disabled' : ''} ${page !== undefined ? `data-page="${page}"` : ''}>${label}</button>`;
+
+    let html = '';
+    html += btn('&laquo;', currentPage - 1, { disabled: currentPage === 1 });
+    pages.forEach(p => {
+        html += p === '…' ? '<span class="pg-ellipsis">…</span>' : btn(p, p, { active: p === currentPage });
+    });
+    html += btn('&raquo;', currentPage + 1, { disabled: currentPage === totalPages });
+
+    controls.innerHTML = html;
+    controls.querySelectorAll('.pg-btn[data-page]').forEach(b => {
+        b.onclick = () => goToRecordsPage(parseInt(b.getAttribute('data-page')));
+    });
 }
 
 function renderRecordsTable(records) {
@@ -680,20 +739,39 @@ function buildRecordsParams(from, to) {
     return params;
 }
 
-async function loadRecords(from, to) {
-    try {
-        let url = `${API}/api/employees`;
-        const params = buildRecordsParams(from, to);
-        if (params.length) url += '?' + params.join('&');
-        const resp = await fetch(url, { headers: adminHeaders() });
-        if (handleAuthError(resp)) return;
-        if (!resp.ok) { console.error('Records fetch failed:', resp.status); return; }
+// Page through /api/employees to collect EVERY record matching the current filters.
+// A single page fetch caps at the server's limit (200 default / 500 max), which would
+// otherwise silently truncate the table, sort, and exports to the first page.
+async function fetchAllRecords(from, to) {
+    const base = buildRecordsParams(from, to);
+    const PAGE_SIZE = 500; // server clamps limit to 500
+    const all = [];
+    let page = 1;
+    let pages = 1;
+    do {
+        const params = base.concat([`page=${page}`, `limit=${PAGE_SIZE}`]);
+        const resp = await fetch(`${API}/api/employees?${params.join('&')}`, { headers: adminHeaders() });
+        if (handleAuthError(resp)) return null;
+        if (!resp.ok) throw new Error(`Records fetch failed: ${resp.status}`);
         const result = await resp.json();
-        currentRecords = result.data || result;
+        const chunk = result.data || result;
+        all.push(...chunk);
+        pages = result.pages || 1;
+        page++;
+    } while (page <= pages);
+    return all;
+}
+
+async function loadRecords(from, to, opts = {}) {
+    try {
+        const records = await fetchAllRecords(from, to);
+        if (records === null) return; // auth error already handled
+        currentRecords = records;
+        if (!opts.preservePage) currentPage = 1;
         sortAndRenderRecords();
         const badge = document.getElementById('recordsCountBadge');
         if (badge) {
-            const total = result.total ?? currentRecords.length;
+            const total = currentRecords.length;
             const site = isSuperAdmin() ? (document.getElementById('filterSite')?.value || '') : getAdminSite();
             const siteLabel = site ? ` · ${site}` : '';
             badge.textContent = `${total} ${total === 1 ? 'record' : 'records'}${siteLabel}`;
@@ -712,7 +790,7 @@ async function deleteRecord(id) {
             return showAlert(err.error || 'Delete failed. Please try again.');
         }
         showAlert('Record deleted successfully.');
-        loadRecords();
+        loadRecords(document.getElementById('filterFrom').value, document.getElementById('filterTo').value, { preservePage: true });
     } catch (err) { console.error('Delete failed:', err); showAlert('Network error. Please try again.'); }
 }
 
@@ -725,7 +803,7 @@ document.getElementById('btnResetFilter').onclick = () => {
     if (selSite) selSite.value = '';
     loadRecords();
 };
-document.getElementById('sortRecords').onchange = sortAndRenderRecords;
+document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortAndRenderRecords(); };
 // Admin export dropdown
 (function() {
     const menu = document.getElementById('adminExportMenu');
@@ -754,32 +832,6 @@ document.getElementById('sortRecords').onchange = sortAndRenderRecords;
         if (!r.photoPath) return '';
         const p = r.photoPath.replace(/\\/g, '/');
         return r.photoPath.startsWith('http') ? r.photoPath : `${API}/${p.startsWith('/') ? p.slice(1) : p}`;
-    }
-
-    // Page through /api/employees to collect EVERY record matching the current filters.
-    // The table view is paginated (server caps each page), so we cannot rely on currentRecords
-    // (only the first page) for exports — otherwise the download is truncated to one page.
-    async function fetchAllRecords() {
-        const base = buildRecordsParams(
-            document.getElementById('filterFrom').value,
-            document.getElementById('filterTo').value
-        );
-        const PAGE_SIZE = 500; // server clamps limit to 500
-        const all = [];
-        let page = 1;
-        let pages = 1;
-        do {
-            const params = base.concat([`page=${page}`, `limit=${PAGE_SIZE}`]);
-            const resp = await fetch(`${API}/api/employees?${params.join('&')}`, { headers: adminHeaders() });
-            if (handleAuthError(resp)) return null;
-            if (!resp.ok) throw new Error(`Records fetch failed: ${resp.status}`);
-            const result = await resp.json();
-            const chunk = result.data || result;
-            all.push(...chunk);
-            pages = result.pages || 1;
-            page++;
-        } while (page <= pages);
-        return all;
     }
 
     function buildXLS(withPhoto, records) {
@@ -918,7 +970,7 @@ document.getElementById('sortRecords').onchange = sortAndRenderRecords;
         btn.textContent = 'Preparing…';
         btn.disabled = true;
         try {
-            const records = await fetchAllRecords();
+            const records = await fetchAllRecords(document.getElementById('filterFrom').value, document.getElementById('filterTo').value);
             if (!records) return; // auth error already handled
             if (!records.length) { alert('No records to export.'); return; }
             exportCleanXLSX(`EntryPass_Records_${getDateStr()}.xlsx`, records);
@@ -934,7 +986,7 @@ document.getElementById('sortRecords').onchange = sortAndRenderRecords;
     document.getElementById('btnAdminExportWithPhoto').onclick = async () => {
         menu.classList.remove('export-dropdown-menu--open');
         try {
-            const records = await fetchAllRecords();
+            const records = await fetchAllRecords(document.getElementById('filterFrom').value, document.getElementById('filterTo').value);
             if (!records) return; // auth error already handled
             if (!records.length) { alert('No records to export.'); return; }
             await exportWithPhotosHTML(`EntryPass_Records_WithPhotos_${getDateStr()}.html`, records);

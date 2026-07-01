@@ -1037,6 +1037,68 @@ body {
     background: #64748b;
 }
 
+/* ─── RECORDS PAGINATION ────────────────────────────────────────── */
+.records-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    padding: 0.15rem 0.25rem;
+}
+
+.records-pagination-info {
+    font-size: 0.78rem;
+    color: var(--text-light);
+    font-weight: 600;
+}
+
+.records-pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.pg-btn {
+    min-width: 34px;
+    height: 34px;
+    padding: 0 0.5rem;
+    border-radius: 8px;
+    border: 1.5px solid #dfe8f5;
+    background: #fff;
+    color: var(--primary);
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.pg-btn:hover:not(:disabled):not(.pg-btn--active) {
+    background: #eef4ff;
+    border-color: var(--primary);
+}
+
+.pg-btn--active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+    cursor: default;
+}
+
+.pg-btn:disabled {
+    color: #b6c2d6;
+    cursor: not-allowed;
+    background: #f8fafc;
+}
+
+.pg-ellipsis {
+    padding: 0 0.3rem;
+    color: var(--text-light);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
 table {
     width: 100%;
     min-width: 1240px;
