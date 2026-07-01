@@ -116,6 +116,22 @@
                                     <h2 class="section-title">Personal Details</h2>
                                 </div>
                                 <form id="passForm" autocomplete="off">
+                                    <div class="field-group aadhar-verify-group" role="radiogroup" aria-label="Aadhar verified">
+                                        <div class="aadhar-verify-row">
+                                            <label class="aadhar-verify-label">Aadhar Verified?</label>
+                                            <div class="aadhar-verify-options">
+                                                <label class="aadhar-verify-option">
+                                                    <input type="radio" name="aadharVerified" id="aadharVerifiedYes" value="yes" />
+                                                    Yes
+                                                </label>
+                                                <label class="aadhar-verify-option">
+                                                    <input type="radio" name="aadharVerified" id="aadharVerifiedNo" value="no" />
+                                                    No
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <p class="aadhar-verify-warning" id="aadharVerifyWarning">Ensure a valid Aadhaar verification is completed.</p>
+                                    </div>
                                     <div class="field-group">
                                         <label for="fullName">Full Name</label>
                                         <input type="text" id="fullName" maxlength="40" placeholder="John Doe" required />

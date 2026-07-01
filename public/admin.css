@@ -804,6 +804,118 @@ body {
     padding: 3rem 0;
 }
 
+/* Two equal-width chart cards side by side — override the base 220px 1fr grid */
+.chart-grid.chart-grid--halves {
+    grid-template-columns: 1fr 1fr;
+    margin-top: 1.25rem;
+}
+
+.chart-grid.chart-grid--single { margin-top: 1.25rem; }
+
+.chart-site-filter { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+/* New chart cards: let the site-filter pills wrap below the title instead of squeezing it */
+#designationChartCard .chart-card-header,
+#ageChartCard .chart-card-header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    row-gap: 0.6rem;
+}
+#designationChartCard .chart-title,
+#ageChartCard .chart-title {
+    white-space: nowrap;
+}
+
+/* ─── DONUT CHART ───────────────────────────────────────────────── */
+.donut-wrap {
+    display: flex;
+    align-items: center;
+    gap: 1.75rem;
+    flex-wrap: wrap;
+    /* Keep the donut + legend a tidy block instead of stretching across a wide card */
+    max-width: 420px;
+    margin: 0.5rem auto 0;
+}
+
+.donut-svg-wrap {
+    position: relative;
+    width: 150px;
+    height: 150px;
+    flex-shrink: 0;
+}
+
+.donut-center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.donut-center-num {
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: var(--primary);
+    line-height: 1;
+}
+
+.donut-center-lbl {
+    font-size: 0.65rem;
+    color: var(--text-light);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-top: 0.15rem;
+}
+
+.donut-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    flex: 1 1 180px;
+    min-width: 170px;
+    max-width: 240px;
+}
+
+.donut-legend-row {
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.55rem;
+    font-size: 0.75rem;
+}
+
+.donut-legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+}
+
+.donut-legend-label {
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.donut-legend-count {
+    font-weight: 800;
+    color: var(--text);
+    min-width: 1.5rem;
+    text-align: right;
+}
+
+.donut-legend-pct {
+    font-size: 0.66rem;
+    font-weight: 700;
+    color: var(--text-light);
+    min-width: 2.6rem;
+    text-align: right;
+}
+
 /* RECORDS TABLE */
 .records-toolbar {
     display: flex;
@@ -2286,7 +2398,8 @@ input.manage-select-check {
         font-size: 2rem;
     }
 
-    .chart-grid {
+    .chart-grid,
+    .chart-grid.chart-grid--halves {
         grid-template-columns: 1fr;
     }
 

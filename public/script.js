@@ -341,6 +341,19 @@
         return custom || 'Others';
     }
 
+    // Aadhar verification is a soft self-attestation flag, not a hard gate — it never blocks
+    // data entry. It's just recorded alongside the record for internal reporting (never on the ID card).
+    function updateAadharVerifyGate() {
+        const no = document.getElementById('aadharVerifiedNo').checked;
+        document.getElementById('aadharVerifyWarning').classList.toggle('is-visible', no);
+    }
+
+    function getAadharVerified() {
+        if (document.getElementById('aadharVerifiedYes').checked) return 'Yes';
+        if (document.getElementById('aadharVerifiedNo').checked) return 'No';
+        return 'Not Answered';
+    }
+
     function updateOthersFieldsVisibility() {
         const cWrap = document.getElementById('contractorOtherWrap');
         const dWrap = document.getElementById('designationOtherWrap');
@@ -377,7 +390,8 @@
         designation: resolveOthersSelect('designation', 'designationOther'),
         validity: document.getElementById('validity').value,
         issueDate: document.getElementById('issueDate').value,
-        contact: document.getElementById('contact').value.trim()
+        contact: document.getElementById('contact').value.trim(),
+        aadharVerified: getAadharVerified()
     });
 
     const loadImage = (src) => new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = src; });
@@ -1624,6 +1638,7 @@
             return;
         }
         passForm.reset();
+        updateAadharVerifyGate();
         ageInput.value = '';
 
         document.getElementById('contractor').value = '';
@@ -1768,7 +1783,7 @@
     }
 
     function exportSiteXLS(withImages) {
-        const headers = ['Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date'];
+        const headers = ['Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date','Aadhar Verified'];
         const allRecords = _mergeWithLocalRecords(_siteRecordsCache);
         const rows = allRecords.map(r => {
             const row = {};
@@ -1785,6 +1800,7 @@
             row['Induction']   = formatDate(r.doi);
             row['Validity']    = formatDate(r.validity);
             row['Issue Date']  = formatDate(r.issueDate);
+            row['Aadhar Verified'] = r.aadharVerified || 'Not Answered';
             return row;
         });
         const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
@@ -1823,7 +1839,7 @@
             } catch { return null; }
         }
 
-        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date'];
+        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date','Aadhar Verified'];
         const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
         const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
 
@@ -1845,6 +1861,7 @@
                 ${td(formatDate(r.dob))}${td(r.bloodGroup)}${td(r.contractor)}
                 ${td(r.laborCamp)}${td(r.designation)}${td(r.contact)}
                 ${td(formatDate(r.doi))}${td(formatDate(r.validity))}${td(formatDate(r.issueDate))}
+                ${td(r.aadharVerified || 'Not Answered')}
             </tr>`;
         }));
 
@@ -2034,6 +2051,9 @@
                 ageInput.style.borderColor = '';
             }
         };
+
+        updateAadharVerifyGate();
+        document.querySelectorAll('input[name="aadharVerified"]').forEach(r => r.addEventListener('change', updateAadharVerifyGate));
 
         btnToStep2.onclick = () => { if (validateStep(1)) goToStep(2); };
         btnToStep3.onclick = () => { if (validateStep(2)) goToStep(3); };

@@ -247,6 +247,7 @@ const EmployeeSchema = new mongoose.Schema({
     issueDate: String,
     site: String,
     operator: String,
+    aadharVerified: { type: String, default: 'Not Answered' },
     photoPath: String,
     createdAt: { type: Date, default: Date.now }
 });
@@ -405,6 +406,7 @@ app.post('/api/save-employee', requireAuth, async (req, res) => {
                 issueDate: otherData.issueDate || '',
                 site: otherData.site || '',
                 operator: otherData.operator || '',
+                aadharVerified: otherData.aadharVerified || 'Not Answered',
                 photoPath: finalPhotoPath
             });
 
@@ -570,10 +572,28 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
             ...(matchStage ? [matchStage] : []),
             { $group: { _id: '$site', count: { $sum: 1 } } }
         ];
+        const byDesignationPipeline = [
+            ...(matchStage ? [matchStage] : []),
+            { $group: { _id: '$designation', count: { $sum: 1 } } }
+        ];
+        // Age is stored as a String — coerce to int, then bucket. Blank/non-numeric/out-of-range
+        // fall into the last "default" bucket so no record is ever dropped.
+        const byAgeGroupPipeline = [
+            ...(matchStage ? [matchStage] : []),
+            { $addFields: { _ageNum: { $convert: { input: '$age', to: 'int', onError: null, onNull: null } } } },
+            { $bucket: {
+                groupBy: '$_ageNum',
+                boundaries: [18, 25, 35, 45, 55],
+                default: 'Other',
+                output: { count: { $sum: 1 } }
+            } }
+        ];
 
-        const [byContractor, bySite] = await Promise.all([
+        const [byContractor, bySite, byDesignation, byAgeGroup] = await Promise.all([
             Employee.aggregate(byContractorPipeline, { maxTimeMS: 5000 }),
-            Employee.aggregate(bySitePipeline, { maxTimeMS: 5000 })
+            Employee.aggregate(bySitePipeline, { maxTimeMS: 5000 }),
+            Employee.aggregate(byDesignationPipeline, { maxTimeMS: 5000 }),
+            Employee.aggregate(byAgeGroupPipeline, { maxTimeMS: 5000 })
         ]);
 
         const formatGroup = (arr) => {
@@ -582,10 +602,20 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
             return obj;
         };
 
+        // Map age buckets to human labels; lower bound is inclusive, upper exclusive.
+        const ageLabels = { '18': '18-25', '25': '25-35', '35': '35-45', '45': '45-55', 'Other': 'Other' };
+        const byAgeGroupObj = {};
+        byAgeGroup.forEach(b => {
+            const label = ageLabels[String(b._id)] || String(b._id);
+            byAgeGroupObj[label] = (byAgeGroupObj[label] || 0) + b.count;
+        });
+
         res.json({
             total, today, week, month,
             byContractor: formatGroup(byContractor),
-            bySite: formatGroup(bySite)
+            bySite: formatGroup(bySite),
+            byDesignation: formatGroup(byDesignation),
+            byAgeGroup: byAgeGroupObj
         });
     } catch (err) {
         console.error(err.message); res.status(500).json({ error: 'Internal server error' });

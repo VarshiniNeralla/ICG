@@ -193,6 +193,7 @@ let _activePeriod = 'day';
 
 async function loadDashboard() {
     _contractorSiteFilter = null;
+    _siteStatsCache = {};
     try {
         const cutoff = getRetentionCutoff();
         const url = cutoff ? `${API}/api/stats?from=${cutoff}` : `${API}/api/stats`;
@@ -258,6 +259,18 @@ async function loadDashboard() {
         }
         renderHorizontalChart('contractorChartArea', _dashData.byContractor || {}, 'contractorChartSubtitle');
 
+        // Donut charts
+        renderDonutChart('designationChartArea', _dashData.byDesignation || {}, 'designationChartSubtitle');
+        renderDonutChart('ageChartArea', _dashData.byAgeGroup || {}, 'ageChartSubtitle');
+
+        // Per-site drill-down filters for the new charts (super admin only)
+        if (isSuperAdmin()) {
+            buildChartSiteFilter('designationSiteFilter', _dashData.bySite || {}, (data) =>
+                renderDonutChart('designationChartArea', data.byDesignation || {}, 'designationChartSubtitle'));
+            buildChartSiteFilter('ageSiteFilter', _dashData.bySite || {}, (data) =>
+                renderDonutChart('ageChartArea', data.byAgeGroup || {}, 'ageChartSubtitle'));
+        }
+
     } catch (err) { console.error('Dashboard load failed:', err); }
 }
 
@@ -322,15 +335,61 @@ async function selectContractorSite(site) {
     }
     document.getElementById('contractorChartSubtitle').textContent = 'Loading…';
     try {
-        const cutoff = getRetentionCutoff();
-        const params = new URLSearchParams({ site });
-        if (cutoff) params.set('from', cutoff);
-        const resp = await fetch(`${API}/api/stats?${params}`, { headers: adminHeaders() });
-        if (!resp.ok) return;
-        const data = await resp.json();
+        const data = await fetchSiteStats(site);
+        if (!data) return;
         renderHorizontalChart('contractorChartArea', data.byContractor || {}, 'contractorChartSubtitle');
         document.getElementById('contractorChartSubtitle').textContent = `${site} — ${data.total || 0} records`;
     } catch (e) { console.error(e); }
+}
+
+// Fetch /api/stats scoped to one site (respecting retention), cached per site so multiple
+// charts drilling into the same site share a single request.
+let _siteStatsCache = {};
+async function fetchSiteStats(site) {
+    if (_siteStatsCache[site]) return _siteStatsCache[site];
+    const cutoff = getRetentionCutoff();
+    const params = new URLSearchParams({ site });
+    if (cutoff) params.set('from', cutoff);
+    const resp = await fetch(`${API}/api/stats?${params}`, { headers: adminHeaders() });
+    if (handleAuthError(resp)) return null;
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    _siteStatsCache[site] = data;
+    return data;
+}
+
+// Generic per-chart site filter. Renders an "All / <site>" pill row and, on click,
+// re-renders the chart from either the global dashboard data or site-scoped stats.
+// renderFn(data, site) is called with the correct dataset each time.
+function buildChartSiteFilter(wrapId, bySite, renderFn) {
+    const wrap = document.getElementById(wrapId);
+    if (!wrap) return;
+    const sites = Object.keys(bySite).sort();
+    if (sites.length < 2) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'flex';
+    wrap.style.gap = '0.4rem';
+    wrap.style.flexWrap = 'wrap';
+    let active = null;
+    const render = () => {
+        wrap.innerHTML = [null, ...sites].map(s => {
+            const on = active === s;
+            const label = s === null ? 'All' : s;
+            return `<button type="button"
+                style="padding:0.22rem 0.65rem;border-radius:20px;font-size:0.68rem;font-weight:700;font-family:inherit;cursor:pointer;border:1.5px solid ${on ? 'var(--primary)' : 'var(--border)'};background:${on ? 'var(--primary)' : '#fff'};color:${on ? '#fff' : 'var(--text-light)'};transition:all 0.15s;"
+                data-site="${s === null ? '' : esc(s)}">${esc(label)}</button>`;
+        }).join('');
+        wrap.querySelectorAll('button').forEach(btn => {
+            btn.onclick = async () => {
+                const s = btn.getAttribute('data-site') || null;
+                active = s;
+                render();
+                if (!s) { renderFn(_dashData, null); return; }
+                const data = await fetchSiteStats(s);
+                if (data) renderFn(data, s);
+            };
+        });
+    };
+    render();
 }
 
 async function renderDashPeriod() {
@@ -484,6 +543,66 @@ function renderHorizontalChart(containerId, dataObj, subtitleId) {
     });
 }
 
+// ─── DONUT CHART (designation, age group) ──────────────────────────
+function renderDonutChart(containerId, dataObj, subtitleId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    let entries = Object.entries(dataObj).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    const MAX_SHOW = 7;
+    if (entries.length > MAX_SHOW) {
+        const rest = entries.slice(MAX_SHOW);
+        const othersCount = rest.reduce((s, e) => s + e[1], 0);
+        entries = entries.slice(0, MAX_SHOW);
+        if (othersCount > 0) entries.push(['Others', othersCount]);
+    }
+
+    const total = entries.reduce((s, e) => s + e[1], 0);
+    if (subtitleId) {
+        const el = document.getElementById(subtitleId);
+        if (el) el.textContent = `${total} total pass${total !== 1 ? 'es' : ''}`;
+    }
+
+    if (total === 0) {
+        container.innerHTML = '<div class="hchart-empty">No data available for this period</div>';
+        return;
+    }
+
+    // Build SVG donut using stroke-dasharray segments on concentric circle arcs.
+    const R = 60, C = 2 * Math.PI * R, CX = 80, CY = 80, SW = 26;
+    let offset = 0;
+    const segments = entries.map(([, value], i) => {
+        const frac = value / total;
+        const dash = frac * C;
+        const color = CHART_COLORS[i % CHART_COLORS.length];
+        const seg = `<circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="${color}" stroke-width="${SW}"
+            stroke-dasharray="${dash.toFixed(2)} ${(C - dash).toFixed(2)}"
+            stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${CX} ${CY})"
+            style="transition:stroke-dasharray 0.6s cubic-bezier(0.4,0,0.2,1);"></circle>`;
+        offset += dash;
+        return seg;
+    }).join('');
+
+    const legend = entries.map(([label, value], i) => {
+        const pct = ((value / total) * 100).toFixed(1);
+        const color = CHART_COLORS[i % CHART_COLORS.length];
+        return `<div class="donut-legend-row">
+            <span class="donut-legend-dot" style="background:${color};"></span>
+            <span class="donut-legend-label" title="${esc(label)}">${esc(label)}</span>
+            <span class="donut-legend-count">${value}</span>
+            <span class="donut-legend-pct">${pct}%</span>
+        </div>`;
+    }).join('');
+
+    container.innerHTML = `<div class="donut-wrap">
+        <div class="donut-svg-wrap">
+            <svg viewBox="0 0 160 160" width="150" height="150">${segments}</svg>
+            <div class="donut-center"><span class="donut-center-num">${total}</span><span class="donut-center-lbl">total</span></div>
+        </div>
+        <div class="donut-legend">${legend}</div>
+    </div>`;
+}
+
 // ------ RECORDS ------
 let currentRecords = [];
 
@@ -543,21 +662,28 @@ function renderRecordsTable(records) {
     });
 }
 
+// Build the shared filter query params used by both the records table and the CSV export,
+// so a download always reflects exactly what the current filters select.
+function buildRecordsParams(from, to) {
+    const params = [];
+    if (!from && !to) {
+        const cutoff = getRetentionCutoff();
+        if (cutoff) from = cutoff;
+    }
+    if (from) params.push(`from=${from}`);
+    if (to) params.push(`to=${to}`);
+    // Super admin: pass selected site filter; site admin: server enforces their site automatically
+    if (isSuperAdmin()) {
+        const selSite = document.getElementById('filterSite');
+        if (selSite && selSite.value) params.push(`site=${encodeURIComponent(selSite.value)}`);
+    }
+    return params;
+}
+
 async function loadRecords(from, to) {
     try {
         let url = `${API}/api/employees`;
-        const params = [];
-        if (!from && !to) {
-            const cutoff = getRetentionCutoff();
-            if (cutoff) from = cutoff;
-        }
-        if (from) params.push(`from=${from}`);
-        if (to) params.push(`to=${to}`);
-        // Super admin: pass selected site filter; site admin: server enforces their site automatically
-        if (isSuperAdmin()) {
-            const selSite = document.getElementById('filterSite');
-            if (selSite && selSite.value) params.push(`site=${encodeURIComponent(selSite.value)}`);
-        }
+        const params = buildRecordsParams(from, to);
         if (params.length) url += '?' + params.join('&');
         const resp = await fetch(url, { headers: adminHeaders() });
         if (handleAuthError(resp)) return;
@@ -630,12 +756,38 @@ document.getElementById('sortRecords').onchange = sortAndRenderRecords;
         return r.photoPath.startsWith('http') ? r.photoPath : `${API}/${p.startsWith('/') ? p.slice(1) : p}`;
     }
 
-    function buildXLS(withPhoto) {
-        const headers = withPhoto
-            ? ['Photo URL','Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Created At']
-            : ['Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Created At'];
+    // Page through /api/employees to collect EVERY record matching the current filters.
+    // The table view is paginated (server caps each page), so we cannot rely on currentRecords
+    // (only the first page) for exports — otherwise the download is truncated to one page.
+    async function fetchAllRecords() {
+        const base = buildRecordsParams(
+            document.getElementById('filterFrom').value,
+            document.getElementById('filterTo').value
+        );
+        const PAGE_SIZE = 500; // server clamps limit to 500
+        const all = [];
+        let page = 1;
+        let pages = 1;
+        do {
+            const params = base.concat([`page=${page}`, `limit=${PAGE_SIZE}`]);
+            const resp = await fetch(`${API}/api/employees?${params.join('&')}`, { headers: adminHeaders() });
+            if (handleAuthError(resp)) return null;
+            if (!resp.ok) throw new Error(`Records fetch failed: ${resp.status}`);
+            const result = await resp.json();
+            const chunk = result.data || result;
+            all.push(...chunk);
+            pages = result.pages || 1;
+            page++;
+        } while (page <= pages);
+        return all;
+    }
 
-        const rows = currentRecords.map(r => {
+    function buildXLS(withPhoto, records) {
+        const headers = withPhoto
+            ? ['Photo URL','Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At']
+            : ['Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At'];
+
+        const rows = records.map(r => {
             const row = {};
             if (withPhoto) row['Photo URL'] = getPhotoUrl(r) || '---';
             row['Name']         = r.fullName  || '---';
@@ -653,6 +805,7 @@ document.getElementById('sortRecords').onchange = sortAndRenderRecords;
             row['DOI']          = formatDate(r.doi);
             row['Validity']     = formatDate(r.validity);
             row['Issue Date']   = formatDate(r.issueDate);
+            row['Aadhar Verified'] = r.aadharVerified || 'Not Answered';
             row['Created At']   = fmtTime(r.createdAt);
             return row;
         });
@@ -665,9 +818,9 @@ document.getElementById('sortRecords').onchange = sortAndRenderRecords;
         return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     }
 
-    function exportCleanXLSX(filename) {
+    function exportCleanXLSX(filename, records) {
         // Without photos — real .xlsx via SheetJS, no warnings
-        const { headers, rows } = buildXLS(false);
+        const { headers, rows } = buildXLS(false, records);
         const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
         ws['!cols'] = headers.map(h => {
             if (h === 'Name' || h === 'Contractor') return { wch: 22 };
@@ -688,14 +841,14 @@ document.getElementById('sortRecords').onchange = sortAndRenderRecords;
         XLSX.writeFile(wb, filename);
     }
 
-    async function exportWithPhotosHTML(filename) {
+    async function exportWithPhotosHTML(filename, records) {
         // With photos — fetch images via server proxy, embed as base64 in a self-contained HTML report
         const btn = document.getElementById('btnAdminExportWithPhoto');
         const origText = btn.textContent;
         btn.textContent = 'Preparing…';
         btn.disabled = true;
 
-        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Created At'];
+        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At'];
         const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
         const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
 
@@ -709,7 +862,7 @@ document.getElementById('sortRecords').onchange = sortAndRenderRecords;
             } catch { return null; }
         }
 
-        const dataRows = await Promise.all(currentRecords.map(async (r, i) => {
+        const dataRows = await Promise.all(records.map(async (r, i) => {
             const bg = i % 2 === 0 ? '#fff' : '#f8fafc';
             const td = v => `<td style="padding:5px 9px;border:1px solid #e2e8f0;vertical-align:middle;font-size:10px;background:${bg};">${v||'---'}</td>`;
             const b64 = await fetchB64(getPhotoUrl(r));
@@ -731,6 +884,7 @@ document.getElementById('sortRecords').onchange = sortAndRenderRecords;
                 ${td(formatDate(r.doi))}
                 ${td(formatDate(r.validity))}
                 ${td(formatDate(r.issueDate))}
+                ${td(x(r.aadharVerified || 'Not Answered'))}
                 ${td(fmtTime(r.createdAt))}
             </tr>`;
         }));
@@ -757,14 +911,37 @@ document.getElementById('sortRecords').onchange = sortAndRenderRecords;
         btn.disabled = false;
     }
 
-    document.getElementById('btnAdminExportNoPhoto').onclick = () => {
+    document.getElementById('btnAdminExportNoPhoto').onclick = async () => {
         menu.classList.remove('export-dropdown-menu--open');
-        exportCleanXLSX(`EntryPass_Records_${getDateStr()}.xlsx`);
+        const btn = document.getElementById('btnAdminExportNoPhoto');
+        const origText = btn.textContent;
+        btn.textContent = 'Preparing…';
+        btn.disabled = true;
+        try {
+            const records = await fetchAllRecords();
+            if (!records) return; // auth error already handled
+            if (!records.length) { alert('No records to export.'); return; }
+            exportCleanXLSX(`EntryPass_Records_${getDateStr()}.xlsx`, records);
+        } catch (err) {
+            console.error('Export failed:', err);
+            alert('Export failed. Please try again.');
+        } finally {
+            btn.textContent = origText;
+            btn.disabled = false;
+        }
     };
 
-    document.getElementById('btnAdminExportWithPhoto').onclick = () => {
+    document.getElementById('btnAdminExportWithPhoto').onclick = async () => {
         menu.classList.remove('export-dropdown-menu--open');
-        exportWithPhotosHTML(`EntryPass_Records_WithPhotos_${getDateStr()}.html`);
+        try {
+            const records = await fetchAllRecords();
+            if (!records) return; // auth error already handled
+            if (!records.length) { alert('No records to export.'); return; }
+            await exportWithPhotosHTML(`EntryPass_Records_WithPhotos_${getDateStr()}.html`, records);
+        } catch (err) {
+            console.error('Export failed:', err);
+            alert('Export failed. Please try again.');
+        }
     };
 })();
 
