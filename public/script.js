@@ -360,19 +360,6 @@
         return custom || 'Others';
     }
 
-    // Aadhar verification is a soft self-attestation flag, not a hard gate — it never blocks
-    // data entry. It's just recorded alongside the record for internal reporting (never on the ID card).
-    function updateAadharVerifyGate() {
-        const no = document.getElementById('aadharVerifiedNo').checked;
-        document.getElementById('aadharVerifyWarning').classList.toggle('is-visible', no);
-    }
-
-    function getAadharVerified() {
-        if (document.getElementById('aadharVerifiedYes').checked) return 'Yes';
-        if (document.getElementById('aadharVerifiedNo').checked) return 'No';
-        return 'Not Answered';
-    }
-
     function updateOthersFieldsVisibility() {
         const cWrap = document.getElementById('contractorOtherWrap');
         const dWrap = document.getElementById('designationOtherWrap');
@@ -413,7 +400,7 @@
         validity: document.getElementById('validity').value,
         issueDate: document.getElementById('issueDate').value,
         contact: document.getElementById('contact').value.trim(),
-        aadharVerified: getAadharVerified()
+        aadharVerified: 'Not Answered'
     });
 
     const loadImage = (src) => new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = src; });
@@ -1660,7 +1647,6 @@
             return;
         }
         passForm.reset();
-        updateAadharVerifyGate();
         ageInput.value = '';
 
         document.getElementById('contractor').value = '';
@@ -2083,9 +2069,6 @@
                 ageInput.style.borderColor = '';
             }
         };
-
-        updateAadharVerifyGate();
-        document.querySelectorAll('input[name="aadharVerified"]').forEach(r => r.addEventListener('change', updateAadharVerifyGate));
 
         btnToStep2.onclick = () => { if (validateStep(1)) goToStep(2); };
         btnToStep3.onclick = () => { if (validateStep(2)) goToStep(3); };
