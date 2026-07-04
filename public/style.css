@@ -616,81 +616,33 @@ body {
     box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12) !important;
 }
 
-/* Aadhar verification note — a soft self-attestation flag, never blocks entry */
+/* Aadhar verification — a soft self-attestation flag, never blocks entry */
 .aadhar-verify-group {
     padding: 0.7rem 0.85rem;
     background: #f8fafc;
     border: 1.5px solid var(--border);
     border-radius: 10px;
     margin-bottom: 1.25rem;
-    transition: background 0.25s ease, border-color 0.25s ease;
 }
 
-.aadhar-verify-row {
+.aadhar-verify-checkbox {
     display: flex;
     align-items: center;
-    gap: 0.85rem;
-    flex-wrap: wrap;
-}
-
-.aadhar-verify-label {
-    margin-bottom: 0;
-}
-
-.aadhar-verify-options {
-    display: flex;
     gap: 0.6rem;
-}
-
-.aadhar-verify-option {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
     font-size: 0.8rem;
-    font-weight: 600;
+    font-weight: 700;
     color: var(--text-light);
-    text-transform: none;
+    text-transform: uppercase;
     cursor: pointer;
     user-select: none;
-    padding: 0.35rem 0.85rem;
-    border-radius: 20px;
-    border: 1.5px solid var(--border);
-    background: #fff;
     margin-bottom: 0;
-    line-height: 1;
-    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
-.aadhar-verify-option:has(input:checked) {
-    color: #fff;
-    border-color: var(--primary);
-    background: var(--primary);
-}
-
-/* Hide the native radio circle — the pill's own background/border shows selection */
-.aadhar-verify-option input {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    pointer-events: none;
-}
-
-.aadhar-verify-warning {
-    font-size: 0.76rem;
-    color: var(--danger);
-    font-weight: 600;
-    margin-top: 0;
-    max-height: 0;
-    overflow: hidden;
-    opacity: 0;
-    transition: max-height 0.25s ease, opacity 0.25s ease, margin-top 0.25s ease;
-}
-
-.aadhar-verify-warning.is-visible {
-    margin-top: 0.55rem;
-    max-height: 3rem;
-    opacity: 1;
+.aadhar-verify-checkbox input {
+    width: 1.05rem;
+    height: 1.05rem;
+    cursor: pointer;
+    accent-color: var(--primary);
 }
 
 .form-row.two-col {

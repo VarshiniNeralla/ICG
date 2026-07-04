@@ -244,6 +244,8 @@ const EmployeeSchema = new mongoose.Schema({
     address: String,
     contractor: String,
     laborCamp: String,
+    subContractor: String,
+    subContractorContact: String,
     designation: String,
     contact: String,
     doi: String,
@@ -251,7 +253,7 @@ const EmployeeSchema = new mongoose.Schema({
     issueDate: String,
     site: String,
     operator: String,
-    aadharVerified: { type: String, default: 'Not Answered' },
+    aadharVerified: { type: String, default: 'No' },
     photoPath: String,
     createdAt: { type: Date, default: Date.now }
 });
@@ -405,6 +407,8 @@ app.post('/api/save-employee', requireAuth, async (req, res) => {
                 address: otherData.address || '',
                 contractor: otherData.contractor || '',
                 laborCamp: otherData.laborCamp || '',
+                subContractor: otherData.subContractor || '',
+                subContractorContact: otherData.subContractorContact || '',
                 designation: otherData.designation || '',
                 contact: otherData.contact || '',
                 doi: otherData.doi || '',
@@ -412,7 +416,7 @@ app.post('/api/save-employee', requireAuth, async (req, res) => {
                 issueDate: otherData.issueDate || '',
                 site: otherData.site || '',
                 operator: otherData.operator || '',
-                aadharVerified: otherData.aadharVerified || 'Not Answered',
+                aadharVerified: otherData.aadharVerified || 'No',
                 photoPath: finalPhotoPath
             });
 

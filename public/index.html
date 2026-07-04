@@ -117,6 +117,12 @@
                                     <h2 class="section-title">Personal Details</h2>
                                 </div>
                                 <form id="passForm" autocomplete="off">
+                                    <div class="field-group aadhar-verify-group">
+                                        <label class="aadhar-verify-checkbox">
+                                            <input type="checkbox" id="aadharVerified" />
+                                            Aadhar Verified
+                                        </label>
+                                    </div>
                                     <div class="field-group">
                                         <label for="fullName">Full Name</label>
                                         <input type="text" id="fullName" maxlength="40" placeholder="John Doe" required />
@@ -235,6 +241,20 @@
                                             class="optional-tag">(optional)</span></label>
                                     <input type="text" id="contractorOther" maxlength="100"
                                         placeholder="e.g. company name if not in the list" autocomplete="organization" />
+                                </div>
+                                <div class="form-row two-col">
+                                    <div class="field-group">
+                                        <label for="subContractor">Thekedar</label>
+                                        <input type="text" id="subContractor" maxlength="100"
+                                            placeholder="Name" autocomplete="off" />
+                                        <span class="field-error" id="err-subContractor"></span>
+                                    </div>
+                                    <div class="field-group">
+                                        <label for="subContractorContact">Thekedar Contact Number</label>
+                                        <input type="tel" id="subContractorContact" maxlength="10"
+                                            placeholder="Number" autocomplete="off" />
+                                        <span class="field-error" id="err-subContractorContact"></span>
+                                    </div>
                                 </div>
                                 <div class="form-row two-col">
                                     <div class="field-group">
@@ -477,11 +497,14 @@
                                 <th>Address</th>
                                 <th>Contractor</th>
                                 <th>Camp</th>
+                                <th>Thekedar</th>
+                                <th>Thekedar Contact</th>
                                 <th>Designation</th>
                                 <th>Contact</th>
                                 <th>Induction</th>
                                 <th>Validity</th>
                                 <th>Issue Date</th>
+                                <th>Aadhar Verified</th>
                             </tr>
                         </thead>
                         <tbody id="siteRecordsBody">

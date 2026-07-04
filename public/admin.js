@@ -688,7 +688,7 @@ function renderRecordsTable(records) {
     if (!tbody) return;
     tbody.innerHTML = '';
     if (records.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="21" style="text-align:center; padding:2rem; color:var(--text-light);">No records found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="23" style="text-align:center; padding:2rem; color:var(--text-light);">No records found</td></tr>';
         return;
     }
     records.forEach((r) => {
@@ -711,6 +711,8 @@ function renderRecordsTable(records) {
             <td class="record-muted">${esc(r.address) || '---'}</td>
             <td class="record-strong">${esc(r.contractor) || '---'}</td>
             <td><span class="record-pill record-pill--camp">${esc(r.laborCamp) || '---'}</span></td>
+            <td class="record-muted">${esc(r.subContractor) || '---'}</td>
+            <td class="record-mono">${esc(r.subContractorContact) || '---'}</td>
             <td><span class="record-pill record-pill--designation">${esc(r.designation) || '---'}</span></td>
             <td class="record-mono">${esc(r.contact) || '---'}</td>
             <td><span class="record-pill record-pill--site">${esc(r.site) || 'EMPTY'}</span></td>
@@ -718,6 +720,7 @@ function renderRecordsTable(records) {
             <td class="record-muted">${esc(formatDate(r.doi))}</td>
             <td class="record-muted">${esc(formatDate(r.validity))}</td>
             <td class="record-muted">${esc(formatDate(r.issueDate))}</td>
+            <td class="record-muted">${esc(r.aadharVerified) || 'No'}</td>
             <td class="record-created">${formatDateTime(r.createdAt)}</td>
             <td class="record-actions-cell"><button class="btn-delete" onclick="deleteRecord('${esc(r._id)}')">Delete</button></td>`;
         tbody.appendChild(tr);
@@ -843,8 +846,8 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
 
     function buildXLS(withPhoto, records) {
         const headers = withPhoto
-            ? ['Photo URL','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At']
-            : ['Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At'];
+            ? ['Photo URL','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Thekedar','Thekedar Contact','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At']
+            : ['Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Thekedar','Thekedar Contact','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At'];
 
         const rows = records.map(r => {
             const row = {};
@@ -860,6 +863,8 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
             row['Address']      = r.address    || '---';
             row['Contractor']   = r.contractor || '---';
             row['Labor Camp']   = r.laborCamp  || '---';
+            row['Thekedar'] = r.subContractor || '---';
+            row['Thekedar Contact'] = r.subContractorContact || '---';
             row['Designation']  = r.designation|| '---';
             row['Contact']      = String(r.contact || '---');
             row['Site']         = r.site       || '---';
@@ -867,7 +872,7 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
             row['DOI']          = formatDate(r.doi);
             row['Validity']     = formatDate(r.validity);
             row['Issue Date']   = formatDate(r.issueDate);
-            row['Aadhar Verified'] = r.aadharVerified || 'Not Answered';
+            row['Aadhar Verified'] = r.aadharVerified || 'No';
             row['Created At']   = fmtTime(r.createdAt);
             return row;
         });
@@ -910,7 +915,7 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
         btn.textContent = 'Preparing…';
         btn.disabled = true;
 
-        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At'];
+        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Thekedar','Thekedar Contact','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At'];
         const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
         const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
 
@@ -942,6 +947,8 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
                 ${td(x(r.address))}
                 ${td(x(r.contractor))}
                 ${td(x(r.laborCamp))}
+                ${td(x(r.subContractor))}
+                ${td(r.subContractorContact)}
                 ${td(x(r.designation))}
                 ${td(r.contact)}
                 ${td(x(r.site))}
@@ -949,7 +956,7 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
                 ${td(formatDate(r.doi))}
                 ${td(formatDate(r.validity))}
                 ${td(formatDate(r.issueDate))}
-                ${td(x(r.aadharVerified || 'Not Answered'))}
+                ${td(x(r.aadharVerified || 'No'))}
                 ${td(fmtTime(r.createdAt))}
             </tr>`;
         }));

@@ -395,12 +395,14 @@
         address: document.getElementById('address').value.trim(),
         contractor: resolveOthersSelect('contractor', 'contractorOther'),
         laborCamp: document.getElementById('laborCamp').value,
+        subContractor: document.getElementById('subContractor').value.trim(),
+        subContractorContact: document.getElementById('subContractorContact').value.trim(),
         doi: document.getElementById('doi').value,
         designation: resolveOthersSelect('designation', 'designationOther'),
         validity: document.getElementById('validity').value,
         issueDate: document.getElementById('issueDate').value,
         contact: document.getElementById('contact').value.trim(),
-        aadharVerified: 'Not Answered'
+        aadharVerified: document.getElementById('aadharVerified').checked ? 'Yes' : 'No'
     });
 
     const loadImage = (src) => new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = src; });
@@ -476,12 +478,16 @@
         }
 
         if (step === 2) {
-            clearFieldErrors(['contractor', 'laborCamp', 'designation', 'contact', 'doi', 'validity']);
+            clearFieldErrors(['contractor', 'laborCamp', 'designation', 'contact', 'doi', 'validity', 'subContractorContact']);
             if (!data.contractor) { setFieldError('contractor', 'Please select a contractor.'); valid = false; }
             if (!data.laborCamp) { setFieldError('laborCamp', 'Please select a labor camp.'); valid = false; }
             if (!data.designation) { setFieldError('designation', 'Please select a designation.'); valid = false; }
             if (data.contact.length !== 10 || isNaN(data.contact)) { setFieldError('contact', 'Contact must be exactly 10 numeric digits.'); valid = false; }
             else if (!/^[6-9]/.test(data.contact)) { setFieldError('contact', 'Phone number must start with 6, 7, 8, or 9.'); valid = false; }
+            if (data.subContractorContact) {
+                if (data.subContractorContact.length !== 10 || isNaN(data.subContractorContact)) { setFieldError('subContractorContact', 'Contact must be exactly 10 numeric digits.'); valid = false; }
+                else if (!/^[6-9]/.test(data.subContractorContact)) { setFieldError('subContractorContact', 'Phone number must start with 6, 7, 8, or 9.'); valid = false; }
+            }
             if (!data.doi) { setFieldError('doi', 'Date of Induction is required.'); valid = false; }
             if (!data.validity) { setFieldError('validity', 'Validity date is required.'); valid = false; }
             else if (valid && new Date(data.validity) <= new Date(data.issueDate)) { setFieldError('validity', 'Validity date must be in the future.'); valid = false; }
@@ -1657,6 +1663,8 @@
         if (contractorOther) contractorOther.value = '';
         if (designationOther) designationOther.value = '';
         updateOthersFieldsVisibility();
+        document.getElementById('subContractor').value = '';
+        document.getElementById('subContractorContact').value = '';
         document.getElementById('contact').value = '';
         document.getElementById('doi').value = '';
         document.getElementById('validity').value = '';
@@ -1714,7 +1722,7 @@
         if (countBadge) { countBadge.style.display = 'none'; countBadge.textContent = ''; }
         document.getElementById('recordsModal').style.display = 'flex';
         const tbody = document.getElementById('siteRecordsBody');
-        tbody.innerHTML = '<tr><td colspan="17" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="20" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
 
         try {
             const resp = await fetch(`${API_BASE}/api/employees?site=${encodeURIComponent(site)}`, {
@@ -1731,7 +1739,7 @@
             }
 
             if (records.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="17" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="20" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
                 return;
             }
 
@@ -1762,16 +1770,19 @@
                     <td>${esc(r.address) || '---'}</td>
                     <td>${esc(r.contractor) || '---'}</td>
                     <td>${esc(r.laborCamp) || '---'}</td>
+                    <td>${esc(r.subContractor) || '---'}</td>
+                    <td>${esc(r.subContractorContact) || '---'}</td>
                     <td>${esc(r.designation) || '---'}</td>
                     <td>${esc(r.contact) || '---'}</td>
                     <td>${esc(formatDate(r.doi))}</td>
                     <td>${esc(formatDate(r.validity))}</td>
-                    <td>${esc(formatDate(r.issueDate))}</td>`;
+                    <td>${esc(formatDate(r.issueDate))}</td>
+                    <td>${esc(r.aadharVerified) || 'No'}</td>`;
                 tbody.appendChild(tr);
             });
         } catch (err) {
             console.error('Failed to load site records:', err);
-            tbody.innerHTML = '<tr><td colspan="17" style="text-align:center; padding:2rem; color:red;">Error loading records.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="20" style="text-align:center; padding:2rem; color:red;">Error loading records.</td></tr>';
         }
     }
 
@@ -1794,7 +1805,7 @@
     }
 
     function exportSiteXLS(withImages) {
-        const headers = ['Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date','Aadhar Verified'];
+        const headers = ['Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Thekedar','Thekedar Contact','Designation','Contact','Induction','Validity','Issue Date','Aadhar Verified'];
         const allRecords = _mergeWithLocalRecords(_siteRecordsCache);
         const rows = allRecords.map(r => {
             const row = {};
@@ -1809,12 +1820,14 @@
             row['Address']     = r.address     || '---';
             row['Contractor']  = r.contractor  || '---';
             row['Camp']        = r.laborCamp   || '---';
+            row['Thekedar'] = r.subContractor || '---';
+            row['Thekedar Contact'] = r.subContractorContact || '---';
             row['Designation'] = r.designation || '---';
             row['Contact']     = String(r.contact || '---');
             row['Induction']   = formatDate(r.doi);
             row['Validity']    = formatDate(r.validity);
             row['Issue Date']  = formatDate(r.issueDate);
-            row['Aadhar Verified'] = r.aadharVerified || 'Not Answered';
+            row['Aadhar Verified'] = r.aadharVerified || 'No';
             return row;
         });
         const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
@@ -1853,7 +1866,7 @@
             } catch { return null; }
         }
 
-        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date','Aadhar Verified'];
+        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Thekedar','Thekedar Contact','Designation','Contact','Induction','Validity','Issue Date','Aadhar Verified'];
         const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
         const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
 
@@ -1873,9 +1886,9 @@
                 ${imgCell}
                 ${td(r.fullName)}${td(r.aadhar)}${td(r.age)}${td(r.gender)}
                 ${td(formatDate(r.dob))}${td(r.bloodGroup)}${td(r.state)}${td(r.district)}${td(r.address)}
-                ${td(r.contractor)}${td(r.laborCamp)}${td(r.designation)}${td(r.contact)}
+                ${td(r.contractor)}${td(r.laborCamp)}${td(r.subContractor)}${td(r.subContractorContact)}${td(r.designation)}${td(r.contact)}
                 ${td(formatDate(r.doi))}${td(formatDate(r.validity))}${td(formatDate(r.issueDate))}
-                ${td(r.aadharVerified || 'Not Answered')}
+                ${td(r.aadharVerified || 'No')}
             </tr>`;
         }));
 
