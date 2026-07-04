@@ -79,6 +79,25 @@
         updateOthersFieldsVisibility();
     }
 
+    function populateStates() {
+        const stateSel = document.getElementById('state');
+        if (!stateSel) return;
+        const states = Object.keys(STATES_DISTRICTS);
+        stateSel.innerHTML = '<option value="">Select</option>' + states.map(s => `<option value="${s}">${s}</option>`).join('');
+    }
+
+    function updateDistrictsForState() {
+        const stateSel = document.getElementById('state');
+        const districtSel = document.getElementById('district');
+        if (!stateSel || !districtSel) return;
+        const districts = STATES_DISTRICTS[stateSel.value] || [];
+        if (!stateSel.value) {
+            districtSel.innerHTML = '<option value="">Select State First</option>';
+            return;
+        }
+        districtSel.innerHTML = '<option value="">Select</option>' + districts.map(d => `<option value="${d}">${d}</option>`).join('');
+    }
+
     setInterval(populateDropdowns, 30000);
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
@@ -384,6 +403,9 @@
         age: document.getElementById('age').value,
         gender: document.getElementById('gender').value,
         bloodGroup: document.getElementById('bloodGroup').value,
+        state: document.getElementById('state').value,
+        district: document.getElementById('district').value,
+        address: document.getElementById('address').value.trim(),
         contractor: resolveOthersSelect('contractor', 'contractorOther'),
         laborCamp: document.getElementById('laborCamp').value,
         doi: document.getElementById('doi').value,
@@ -1706,7 +1728,7 @@
         if (countBadge) { countBadge.style.display = 'none'; countBadge.textContent = ''; }
         document.getElementById('recordsModal').style.display = 'flex';
         const tbody = document.getElementById('siteRecordsBody');
-        tbody.innerHTML = '<tr><td colspan="14" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="17" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
 
         try {
             const resp = await fetch(`${API_BASE}/api/employees?site=${encodeURIComponent(site)}`, {
@@ -1723,7 +1745,7 @@
             }
 
             if (records.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="14" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="17" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
                 return;
             }
 
@@ -1749,6 +1771,9 @@
                     <td>${esc(r.gender) || '---'}</td>
                     <td>${esc(formatDate(r.dob))}</td>
                     <td>${esc(r.bloodGroup) || '---'}</td>
+                    <td>${esc(r.state) || '---'}</td>
+                    <td>${esc(r.district) || '---'}</td>
+                    <td>${esc(r.address) || '---'}</td>
                     <td>${esc(r.contractor) || '---'}</td>
                     <td>${esc(r.laborCamp) || '---'}</td>
                     <td>${esc(r.designation) || '---'}</td>
@@ -1760,7 +1785,7 @@
             });
         } catch (err) {
             console.error('Failed to load site records:', err);
-            tbody.innerHTML = '<tr><td colspan="14" style="text-align:center; padding:2rem; color:red;">Error loading records.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="17" style="text-align:center; padding:2rem; color:red;">Error loading records.</td></tr>';
         }
     }
 
@@ -1783,7 +1808,7 @@
     }
 
     function exportSiteXLS(withImages) {
-        const headers = ['Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date','Aadhar Verified'];
+        const headers = ['Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date','Aadhar Verified'];
         const allRecords = _mergeWithLocalRecords(_siteRecordsCache);
         const rows = allRecords.map(r => {
             const row = {};
@@ -1793,6 +1818,9 @@
             row['Gender']      = r.gender      || '---';
             row['DOB']         = formatDate(r.dob);
             row['Blood Group'] = r.bloodGroup  || '---';
+            row['State']       = r.state       || '---';
+            row['District']    = r.district    || '---';
+            row['Address']     = r.address     || '---';
             row['Contractor']  = r.contractor  || '---';
             row['Camp']        = r.laborCamp   || '---';
             row['Designation'] = r.designation || '---';
@@ -1839,7 +1867,7 @@
             } catch { return null; }
         }
 
-        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date','Aadhar Verified'];
+        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Designation','Contact','Induction','Validity','Issue Date','Aadhar Verified'];
         const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
         const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
 
@@ -1858,8 +1886,8 @@
             return `<tr>
                 ${imgCell}
                 ${td(r.fullName)}${td(r.aadhar)}${td(r.age)}${td(r.gender)}
-                ${td(formatDate(r.dob))}${td(r.bloodGroup)}${td(r.contractor)}
-                ${td(r.laborCamp)}${td(r.designation)}${td(r.contact)}
+                ${td(formatDate(r.dob))}${td(r.bloodGroup)}${td(r.state)}${td(r.district)}${td(r.address)}
+                ${td(r.contractor)}${td(r.laborCamp)}${td(r.designation)}${td(r.contact)}
                 ${td(formatDate(r.doi))}${td(formatDate(r.validity))}${td(formatDate(r.issueDate))}
                 ${td(r.aadharVerified || 'Not Answered')}
             </tr>`;
@@ -2035,6 +2063,10 @@
         const selDesignation = document.getElementById('designation');
         if (selContractor) selContractor.addEventListener('change', updateOthersFieldsVisibility);
         if (selDesignation) selDesignation.addEventListener('change', updateOthersFieldsVisibility);
+
+        populateStates();
+        const selState = document.getElementById('state');
+        if (selState) selState.addEventListener('change', updateDistrictsForState);
 
         dobInput.onchange = () => {
             const b = new Date(dobInput.value), t = new Date();

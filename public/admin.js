@@ -688,7 +688,7 @@ function renderRecordsTable(records) {
     if (!tbody) return;
     tbody.innerHTML = '';
     if (records.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="18" style="text-align:center; padding:2rem; color:var(--text-light);">No records found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="21" style="text-align:center; padding:2rem; color:var(--text-light);">No records found</td></tr>';
         return;
     }
     records.forEach((r) => {
@@ -706,6 +706,9 @@ function renderRecordsTable(records) {
             <td><span class="record-pill record-pill--gender">${esc(r.gender) || '---'}</span></td>
             <td class="record-muted">${esc(formatDate(r.dob))}</td>
             <td><span class="record-pill record-pill--blood">${esc(r.bloodGroup) || '---'}</span></td>
+            <td class="record-muted">${esc(r.state) || '---'}</td>
+            <td class="record-muted">${esc(r.district) || '---'}</td>
+            <td class="record-muted">${esc(r.address) || '---'}</td>
             <td class="record-strong">${esc(r.contractor) || '---'}</td>
             <td><span class="record-pill record-pill--camp">${esc(r.laborCamp) || '---'}</span></td>
             <td><span class="record-pill record-pill--designation">${esc(r.designation) || '---'}</span></td>
@@ -840,8 +843,8 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
 
     function buildXLS(withPhoto, records) {
         const headers = withPhoto
-            ? ['Photo URL','Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At']
-            : ['Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At'];
+            ? ['Photo URL','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At']
+            : ['Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At'];
 
         const rows = records.map(r => {
             const row = {};
@@ -852,6 +855,9 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
             row['Gender']       = r.gender     || '---';
             row['DOB']          = formatDate(r.dob);
             row['Blood Group']  = r.bloodGroup || '---';
+            row['State']        = r.state      || '---';
+            row['District']     = r.district   || '---';
+            row['Address']      = r.address    || '---';
             row['Contractor']   = r.contractor || '---';
             row['Labor Camp']   = r.laborCamp  || '---';
             row['Designation']  = r.designation|| '---';
@@ -904,7 +910,7 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
         btn.textContent = 'Preparing…';
         btn.disabled = true;
 
-        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At'];
+        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At'];
         const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
         const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
 
@@ -931,6 +937,9 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
                 ${td(x(r.gender))}
                 ${td(formatDate(r.dob))}
                 ${td(x(r.bloodGroup))}
+                ${td(x(r.state))}
+                ${td(x(r.district))}
+                ${td(x(r.address))}
                 ${td(x(r.contractor))}
                 ${td(x(r.laborCamp))}
                 ${td(x(r.designation))}
@@ -1295,7 +1304,7 @@ async function sortListAlpha(key, listId) {
 // Which site the super admin is currently editing (null = their own / site admin's site)
 let _manageSite = null;
 
-let _knownSites = ['Udyan', 'Vyoma'];
+let _knownSites = ['Udyan', 'Vyoma', 'Nishada'];
 
 function getEffectiveSite() {
     // Site admin: always their own site (from session)

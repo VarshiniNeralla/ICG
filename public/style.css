@@ -414,6 +414,40 @@ body {
     gap: 0.8rem;
 }
 
+/* Personal step — same compact treatment as Employment; State/District/Address pushed it taller */
+#step1 > .card-section {
+    padding: 1.05rem 1.2rem 1.05rem;
+}
+
+#step1 > .card-section > .step-header {
+    margin-bottom: 0.68rem;
+    padding-bottom: 0.48rem;
+}
+
+#step1 > .card-section .field-group,
+#step1 > .card-section .aadhar-verify-group {
+    margin-bottom: 0.65rem;
+}
+
+#step1 > .card-section .form-row.two-col,
+#step1 > .card-section .form-row.three-col {
+    gap: 0.8rem;
+}
+
+#step1 > .card-section label {
+    margin-bottom: 0.32rem;
+}
+
+#step1 > .card-section input,
+#step1 > .card-section select {
+    padding: 0.58rem 0.78rem;
+    font-size: 0.92rem;
+}
+
+#step1 > .card-section .step-actions {
+    margin-top: 0.45rem;
+}
+
 #step2 > .card-section label {
     margin-bottom: 0.32rem;
 }
@@ -662,6 +696,12 @@ body {
 .form-row.two-col {
     display: grid;
     grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+.form-row.three-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 1rem;
 }
 
@@ -1743,6 +1783,12 @@ input[readonly] {
 
     /* Two-column form rows collapse to single column */
     .form-row.two-col {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+
+    /* Three-column form rows collapse to single column on small screens */
+    .form-row.three-col {
         grid-template-columns: 1fr;
         gap: 0;
     }

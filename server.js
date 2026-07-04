@@ -130,12 +130,13 @@ const ADMIN_PASS = process.env.ADMIN_PASS || 'admin@123';
 
 // Site-restricted admins — each can only see their own site's records
 const SITE_ADMINS = {
-    'admin@udyan.mhc.in':  { password: 'admin@udyan',  site: 'Udyan' },
-    'admin@vyoma.mhc.in':  { password: 'admin@vyoma',  site: 'Vyoma' },
+    'admin@udyan.mhc.in':    { password: 'admin@udyan',    site: 'Udyan' },
+    'admin@vyoma.mhc.in':    { password: 'admin@vyoma',    site: 'Vyoma' },
+    'admin@nishada.mhc.in':  { password: 'admin@nishada',  site: 'Nishada' },
 };
 
 const VALID_OPERATORS = [
-    'CSO-Udyan', 'CSO-Vyoma'
+    'CSO-Udyan', 'CSO-Vyoma', 'CSO-Nishada'
 ];
 
 function getOperatorPassword(username) {
@@ -238,6 +239,9 @@ const EmployeeSchema = new mongoose.Schema({
     age: String,
     gender: String,
     bloodGroup: String,
+    state: String,
+    district: String,
+    address: String,
     contractor: String,
     laborCamp: String,
     designation: String,
@@ -366,7 +370,6 @@ app.post('/api/save-employee', requireAuth, async (req, res) => {
         if (!otherData.gender || !['Male', 'Female', 'Other'].includes(otherData.gender)) {
             return res.status(400).json({ error: 'Valid gender required.' });
         }
-
         console.log(`[Backend ${reqID}] START save: ${fullName}`);
         let finalPhotoPath = null;
 
@@ -397,6 +400,9 @@ app.post('/api/save-employee', requireAuth, async (req, res) => {
                 age: otherData.age || '',
                 gender: otherData.gender || '',
                 bloodGroup: otherData.bloodGroup || '',
+                state: otherData.state || '',
+                district: otherData.district || '',
+                address: otherData.address || '',
                 contractor: otherData.contractor || '',
                 laborCamp: otherData.laborCamp || '',
                 designation: otherData.designation || '',
