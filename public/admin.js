@@ -962,13 +962,13 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
         }));
 
         const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>Entry Pass Records With Photos</title>
+<title>Parichay Records With Photos</title>
 <style>
   body{font-family:Calibri,Arial,sans-serif;font-size:10px;margin:16px;}
   table{border-collapse:collapse;width:100%;}
   @media print{body{margin:0;}}
 </style></head><body>
-<h2 style="font-family:Arial;color:#1a3c6e;margin-bottom:12px;">Entry Pass Records — ${getDateStr()}</h2>
+<h2 style="font-family:Arial;color:#1a3c6e;margin-bottom:12px;">Parichay Records — ${getDateStr()}</h2>
 <table><thead><tr>${header}</tr></thead><tbody>${dataRows.join('')}</tbody></table>
 </body></html>`;
 
