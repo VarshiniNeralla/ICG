@@ -20,8 +20,6 @@
 
 html {
     overflow-x: clip;
-    overflow-y: scroll;
-    scrollbar-gutter: stable;
 }
 
 body {
