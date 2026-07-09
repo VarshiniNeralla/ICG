@@ -88,9 +88,22 @@ body {
     font-size: 1.15rem;
     font-weight: 900;
     color: var(--primary);
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    letter-spacing: 0.03em;
     line-height: 1;
+}
+
+.login-tagline {
+    font-size: 0.62rem;
+    font-weight: 600;
+    color: var(--text-light);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin: -1.4rem 0 1.75rem;
+}
+
+.login-tagline strong {
+    color: var(--accent);
+    font-weight: 700;
 }
 
 .login-header h2 {
@@ -98,11 +111,6 @@ body {
     font-weight: 800;
     color: var(--primary);
     margin-bottom: 0.5rem;
-}
-
-.login-header p {
-    color: black;
-    font-size: 1rem;
 }
 
 .error-msg {
@@ -182,17 +190,22 @@ body {
 .header-brand-wordmark {
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
     justify-content: center;
     gap: 1px;
     min-width: 0;
+}
+
+.header-tagline strong {
+    color: var(--accent);
+    font-weight: 700;
 }
 
 .header-brand-word {
     font-size: 1rem;
     font-weight: 900;
     color: var(--primary);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
     line-height: 1.1;
     white-space: nowrap;
     border-bottom: 2px solid var(--accent);
@@ -201,7 +214,8 @@ body {
 }
 
 .header-brand-wordmark p,
-.header-text-sub {
+.header-text-sub,
+.header-tagline {
     font-size: 0.6rem;
     color: var(--text-light);
     text-transform: uppercase;
@@ -751,6 +765,19 @@ body {
     gap: 0.75rem;
 }
 
+.hchart-row--others {
+    cursor: pointer;
+    border-radius: 8px;
+}
+
+.hchart-row--others:hover {
+    background: var(--bg-hover, #f1f5f9);
+}
+
+.hchart-row--others .hchart-label {
+    text-decoration: underline dotted;
+}
+
 .hchart-label {
     font-size: 0.74rem;
     font-weight: 600;
@@ -883,6 +910,19 @@ body {
     align-items: center;
     gap: 0.55rem;
     font-size: 0.75rem;
+}
+
+.donut-legend-row--others {
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+.donut-legend-row--others:hover {
+    background: var(--bg-hover, #f1f5f9);
+}
+
+.donut-legend-row--others .donut-legend-label {
+    text-decoration: underline dotted;
 }
 
 .donut-legend-dot {
@@ -2265,6 +2305,72 @@ input.manage-select-check {
     animation: scaleIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
+.modal-content--wide {
+    max-width: 560px;
+    text-align: left;
+}
+
+.others-modal-subtitle {
+    color: var(--text-light);
+    font-size: 0.82rem;
+    margin: -0.5rem 0 1.1rem;
+}
+
+.others-modal-list {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem 0.9rem;
+    max-height: 340px;
+    overflow-y: auto;
+    margin-bottom: 1.5rem;
+    padding-right: 0.25rem;
+}
+
+.others-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.65rem;
+    border-radius: 10px;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    min-width: 0;
+}
+
+.others-item-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.others-item-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+}
+
+.others-item-count {
+    font-size: 0.78rem;
+    font-weight: 800;
+    color: var(--primary);
+    background: white;
+    border-radius: 999px;
+    padding: 0.1rem 0.55rem;
+    flex-shrink: 0;
+}
+
+@media (max-width: 520px) {
+    .others-modal-list {
+        grid-template-columns: 1fr;
+    }
+}
+
 .modal-content h3 {
     color: var(--primary);
     font-size: 1.1rem;
@@ -2279,6 +2385,7 @@ input.manage-select-check {
     font-size: 0.95rem;
     line-height: 1.6;
     margin-bottom: 1.75rem;
+    white-space: pre-line;
 }
 
 .modal-actions {

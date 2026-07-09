@@ -261,14 +261,14 @@ async function loadDashboard() {
 
         // Donut charts
         renderDonutChart('designationChartArea', _dashData.byDesignation || {}, 'designationChartSubtitle');
-        renderDonutChart('ageChartArea', _dashData.byAgeGroup || {}, 'ageChartSubtitle');
+        renderDonutChart('ageChartArea', _dashData.byAgeGroup || {}, 'ageChartSubtitle', { 'Other': Object.entries(_dashData.ageOtherBreakdown || {}) });
 
         // Per-site drill-down filters for the new charts (super admin only)
         if (isSuperAdmin()) {
             buildChartSiteFilter('designationSiteFilter', _dashData.bySite || {}, (data) =>
                 renderDonutChart('designationChartArea', data.byDesignation || {}, 'designationChartSubtitle'));
             buildChartSiteFilter('ageSiteFilter', _dashData.bySite || {}, (data) =>
-                renderDonutChart('ageChartArea', data.byAgeGroup || {}, 'ageChartSubtitle'));
+                renderDonutChart('ageChartArea', data.byAgeGroup || {}, 'ageChartSubtitle', { 'Other': Object.entries(data.ageOtherBreakdown || {}) }));
         }
 
     } catch (err) { console.error('Dashboard load failed:', err); }
@@ -493,9 +493,11 @@ function renderHorizontalChart(containerId, dataObj, subtitleId) {
     let entries = Object.entries(dataObj).sort((a, b) => b[1] - a[1]);
     const MAX_SHOW = 8;
     let othersCount = 0;
+    let othersBreakdown = [];
     if (entries.length > MAX_SHOW) {
         const rest = entries.slice(MAX_SHOW);
         othersCount = rest.reduce((s, e) => s + e[1], 0);
+        othersBreakdown = rest;
         entries = entries.slice(0, MAX_SHOW);
     }
     if (othersCount > 0) entries.push(['Others', othersCount]);
@@ -518,8 +520,9 @@ function renderHorizontalChart(containerId, dataObj, subtitleId) {
         const barPct = maxVal > 0 ? ((value / maxVal) * 100).toFixed(1) : 0;
         const color = CHART_COLORS[i % CHART_COLORS.length];
         const bg = CHART_BG[i % CHART_BG.length];
+        const isOthers = label === 'Others' && othersBreakdown.length > 0;
         return `
-        <div class="hchart-row">
+        <div class="hchart-row${isOthers ? ' hchart-row--others' : ''}"${isOthers ? ` onclick='showOthersBreakdown(${JSON.stringify(othersBreakdown)})' title="Click to see what's in Others"` : ''}>
             <div class="hchart-label" title="${esc(label)}">${esc(label)}</div>
             <div class="hchart-track">
                 <div class="hchart-fill" style="width:${barPct}%; background:${color};" data-val="${value}"></div>
@@ -543,16 +546,44 @@ function renderHorizontalChart(containerId, dataObj, subtitleId) {
     });
 }
 
+// Show a breakdown of what's grouped into an "Others" bucket in a chart.
+function showOthersBreakdown(entries) {
+    const sorted = [...entries].sort((a, b) => b[1] - a[1]);
+    const total = sorted.reduce((s, e) => s + e[1], 0);
+    const subtitle = document.getElementById('othersModalSubtitle');
+    if (subtitle) subtitle.textContent = `${sorted.length} item${sorted.length !== 1 ? 's' : ''} · ${total} pass${total !== 1 ? 'es' : ''} grouped together`;
+
+    const list = document.getElementById('othersModalList');
+    if (list) {
+        list.innerHTML = sorted.map(([label, value], i) => `
+            <div class="others-item">
+                <span class="others-item-dot" style="background:${CHART_COLORS[i % CHART_COLORS.length]};"></span>
+                <span class="others-item-label" title="${esc(label)}">${esc(label)}</span>
+                <span class="others-item-count">${value}</span>
+            </div>`).join('');
+    }
+    document.getElementById('othersModal').style.display = 'flex';
+}
+
+document.getElementById('closeOthersModal').onclick = () => {
+    document.getElementById('othersModal').style.display = 'none';
+};
+
 // ─── DONUT CHART (designation, age group) ──────────────────────────
-function renderDonutChart(containerId, dataObj, subtitleId) {
+// knownBreakdowns: optional map of label -> [[subLabel, count], ...] for slices whose
+// composition is already known server-side (e.g. the age "Other" bucket), so clicking
+// them shows real data instead of only the client-computed top-N overflow.
+function renderDonutChart(containerId, dataObj, subtitleId, knownBreakdowns) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
     let entries = Object.entries(dataObj).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
     const MAX_SHOW = 7;
+    const breakdowns = { ...(knownBreakdowns || {}) };
     if (entries.length > MAX_SHOW) {
         const rest = entries.slice(MAX_SHOW);
         const othersCount = rest.reduce((s, e) => s + e[1], 0);
+        breakdowns['Others'] = rest;
         entries = entries.slice(0, MAX_SHOW);
         if (othersCount > 0) entries.push(['Others', othersCount]);
     }
@@ -586,7 +617,9 @@ function renderDonutChart(containerId, dataObj, subtitleId) {
     const legend = entries.map(([label, value], i) => {
         const pct = ((value / total) * 100).toFixed(1);
         const color = CHART_COLORS[i % CHART_COLORS.length];
-        return `<div class="donut-legend-row">
+        const breakdown = breakdowns[label];
+        const isClickable = breakdown && breakdown.length > 0;
+        return `<div class="donut-legend-row${isClickable ? ' donut-legend-row--others' : ''}"${isClickable ? ` onclick='showOthersBreakdown(${JSON.stringify(breakdown)})' title="Click to see what's in ${esc(label)}"` : ''}>
             <span class="donut-legend-dot" style="background:${color};"></span>
             <span class="donut-legend-label" title="${esc(label)}">${esc(label)}</span>
             <span class="donut-legend-count">${value}</span>

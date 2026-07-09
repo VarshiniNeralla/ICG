@@ -598,17 +598,29 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
                 output: { count: { $sum: 1 } }
             } }
         ];
+        // Breakdown of the "Other" bucket by raw age value (blank/non-numeric/out-of-range),
+        // so the dashboard can show what's actually in it.
+        const ageOtherBreakdownPipeline = [
+            ...(matchStage ? [matchStage] : []),
+            { $addFields: { _ageNum: { $convert: { input: '$age', to: 'int', onError: null, onNull: null } } } },
+            { $match: { $or: [{ _ageNum: null }, { _ageNum: { $lt: 18 } }, { _ageNum: { $gte: 55 } }] } },
+            { $group: { _id: '$age', count: { $sum: 1 } } }
+        ];
 
-        const [byContractor, bySite, byDesignation, byAgeGroup] = await Promise.all([
+        const [byContractor, bySite, byDesignation, byAgeGroup, ageOtherBreakdown] = await Promise.all([
             Employee.aggregate(byContractorPipeline, { maxTimeMS: 5000 }),
             Employee.aggregate(bySitePipeline, { maxTimeMS: 5000 }),
             Employee.aggregate(byDesignationPipeline, { maxTimeMS: 5000 }),
-            Employee.aggregate(byAgeGroupPipeline, { maxTimeMS: 5000 })
+            Employee.aggregate(byAgeGroupPipeline, { maxTimeMS: 5000 }),
+            Employee.aggregate(ageOtherBreakdownPipeline, { maxTimeMS: 5000 })
         ]);
 
         const formatGroup = (arr) => {
             const obj = {};
-            arr.forEach(item => { if (item._id) obj[item._id] = item.count; });
+            arr.forEach(item => {
+                const key = item._id || 'Unspecified';
+                obj[key] = (obj[key] || 0) + item.count;
+            });
             return obj;
         };
 
@@ -620,9 +632,12 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
             byAgeGroupObj[label] = (byAgeGroupObj[label] || 0) + b.count;
         });
 
+        const ageOtherBreakdownObj = formatGroup(ageOtherBreakdown);
+
         res.json({
             total, today, week, month,
             byContractor: formatGroup(byContractor),
+            ageOtherBreakdown: ageOtherBreakdownObj,
             bySite: formatGroup(bySite),
             byDesignation: formatGroup(byDesignation),
             byAgeGroup: byAgeGroupObj
