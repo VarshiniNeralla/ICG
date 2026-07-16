@@ -203,6 +203,30 @@
                 </div>
             </div>
 
+            <!-- Donut charts: state + district -->
+            <div class="chart-grid chart-grid--halves" id="dashLocationGrid">
+                <div class="chart-card" id="stateChartCard">
+                    <div class="chart-card-header">
+                        <div>
+                            <h3 class="chart-title">By State</h3>
+                            <p class="chart-subtitle" id="stateChartSubtitle">All records</p>
+                        </div>
+                        <div id="stateSiteFilter" class="chart-site-filter" style="display:none;"></div>
+                    </div>
+                    <div class="chart-area" id="stateChartArea"></div>
+                </div>
+                <div class="chart-card" id="districtChartCard">
+                    <div class="chart-card-header">
+                        <div>
+                            <h3 class="chart-title">By District</h3>
+                            <p class="chart-subtitle" id="districtChartSubtitle">All records</p>
+                        </div>
+                        <div id="districtSiteFilter" class="chart-site-filter" style="display:none;"></div>
+                    </div>
+                    <div class="chart-area" id="districtChartArea"></div>
+                </div>
+            </div>
+
         </section>
 
         <!-- TAB: RECORDS -->
@@ -223,6 +247,8 @@
                         <option value="Udyan">Udyan</option>
                         <option value="Vyoma">Vyoma</option>
                         <option value="Nishada">Nishada</option>
+                        <option value="Vipina">Vipina</option>
+                        <option value="TTPL">TTPL</option>
                     </select>
                 </div>
                 <button id="btnApplyFilter" class="btn btn-primary btn-sm">Filter</button>

@@ -262,13 +262,19 @@ async function loadDashboard() {
         // Donut charts
         renderDonutChart('designationChartArea', _dashData.byDesignation || {}, 'designationChartSubtitle');
         renderDonutChart('ageChartArea', _dashData.byAgeGroup || {}, 'ageChartSubtitle', { 'Other': Object.entries(_dashData.ageOtherBreakdown || {}) });
+        renderDonutChart('stateChartArea', _dashData.byState || {}, 'stateChartSubtitle');
+        renderDonutChart('districtChartArea', _dashData.byDistrict || {}, 'districtChartSubtitle');
 
-        // Per-site drill-down filters for the new charts (super admin only)
+        // Per-site drill-down filters for the donut charts (super admin only)
         if (isSuperAdmin()) {
             buildChartSiteFilter('designationSiteFilter', _dashData.bySite || {}, (data) =>
                 renderDonutChart('designationChartArea', data.byDesignation || {}, 'designationChartSubtitle'));
             buildChartSiteFilter('ageSiteFilter', _dashData.bySite || {}, (data) =>
                 renderDonutChart('ageChartArea', data.byAgeGroup || {}, 'ageChartSubtitle', { 'Other': Object.entries(data.ageOtherBreakdown || {}) }));
+            buildChartSiteFilter('stateSiteFilter', _dashData.bySite || {}, (data) =>
+                renderDonutChart('stateChartArea', data.byState || {}, 'stateChartSubtitle'));
+            buildChartSiteFilter('districtSiteFilter', _dashData.bySite || {}, (data) =>
+                renderDonutChart('districtChartArea', data.byDistrict || {}, 'districtChartSubtitle'));
         }
 
     } catch (err) { console.error('Dashboard load failed:', err); }
@@ -1344,7 +1350,7 @@ async function sortListAlpha(key, listId) {
 // Which site the super admin is currently editing (null = their own / site admin's site)
 let _manageSite = null;
 
-let _knownSites = ['Udyan', 'Vyoma', 'Nishada'];
+let _knownSites = ['Udyan', 'Vyoma', 'Nishada', 'Vipina', 'TTPL'];
 
 function getEffectiveSite() {
     // Site admin: always their own site (from session)

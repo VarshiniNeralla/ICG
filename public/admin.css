@@ -841,13 +841,17 @@ body {
 
 /* New chart cards: let the site-filter pills wrap below the title instead of squeezing it */
 #designationChartCard .chart-card-header,
-#ageChartCard .chart-card-header {
+#ageChartCard .chart-card-header,
+#stateChartCard .chart-card-header,
+#districtChartCard .chart-card-header {
     flex-wrap: wrap;
     gap: 0.5rem;
     row-gap: 0.6rem;
 }
 #designationChartCard .chart-title,
-#ageChartCard .chart-title {
+#ageChartCard .chart-title,
+#stateChartCard .chart-title,
+#districtChartCard .chart-title {
     white-space: nowrap;
 }
 

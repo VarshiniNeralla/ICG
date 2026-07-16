@@ -133,10 +133,12 @@ const SITE_ADMINS = {
     'admin@udyan.mhc.in':    { password: 'admin@udyan',    site: 'Udyan' },
     'admin@vyoma.mhc.in':    { password: 'admin@vyoma',    site: 'Vyoma' },
     'admin@nishada.mhc.in':  { password: 'admin@nishada',  site: 'Nishada' },
+    'admin@vipina.mhc.in':   { password: 'admin@vipina',   site: 'Vipina' },
+    'admin@ttpl.mhc.in':     { password: 'admin@ttpl',     site: 'TTPL' },
 };
 
 const VALID_OPERATORS = [
-    'CSO-Udyan', 'CSO-Vyoma', 'CSO-Nishada'
+    'CSO-Udyan', 'CSO-Vyoma', 'CSO-Nishada', 'CSO-Vipina', 'CSO-TTPL'
 ];
 
 function getOperatorPassword(username) {
@@ -586,6 +588,14 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
             ...(matchStage ? [matchStage] : []),
             { $group: { _id: '$designation', count: { $sum: 1 } } }
         ];
+        const byStatePipeline = [
+            ...(matchStage ? [matchStage] : []),
+            { $group: { _id: '$state', count: { $sum: 1 } } }
+        ];
+        const byDistrictPipeline = [
+            ...(matchStage ? [matchStage] : []),
+            { $group: { _id: '$district', count: { $sum: 1 } } }
+        ];
         // Age is stored as a String — coerce to int, then bucket. Blank/non-numeric/out-of-range
         // fall into the last "default" bucket so no record is ever dropped.
         const byAgeGroupPipeline = [
@@ -607,10 +617,12 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
             { $group: { _id: '$age', count: { $sum: 1 } } }
         ];
 
-        const [byContractor, bySite, byDesignation, byAgeGroup, ageOtherBreakdown] = await Promise.all([
+        const [byContractor, bySite, byDesignation, byState, byDistrict, byAgeGroup, ageOtherBreakdown] = await Promise.all([
             Employee.aggregate(byContractorPipeline, { maxTimeMS: 5000 }),
             Employee.aggregate(bySitePipeline, { maxTimeMS: 5000 }),
             Employee.aggregate(byDesignationPipeline, { maxTimeMS: 5000 }),
+            Employee.aggregate(byStatePipeline, { maxTimeMS: 5000 }),
+            Employee.aggregate(byDistrictPipeline, { maxTimeMS: 5000 }),
             Employee.aggregate(byAgeGroupPipeline, { maxTimeMS: 5000 }),
             Employee.aggregate(ageOtherBreakdownPipeline, { maxTimeMS: 5000 })
         ]);
@@ -640,6 +652,8 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
             ageOtherBreakdown: ageOtherBreakdownObj,
             bySite: formatGroup(bySite),
             byDesignation: formatGroup(byDesignation),
+            byState: formatGroup(byState),
+            byDistrict: formatGroup(byDistrict),
             byAgeGroup: byAgeGroupObj
         });
     } catch (err) {
