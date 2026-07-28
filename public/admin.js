@@ -968,37 +968,47 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
             } catch { return null; }
         }
 
-        const dataRows = await Promise.all(records.map(async (r, i) => {
-            const bg = i % 2 === 0 ? '#fff' : '#f8fafc';
-            const td = v => `<td style="padding:5px 9px;border:1px solid #e2e8f0;vertical-align:middle;font-size:10px;background:${bg};">${v||'---'}</td>`;
-            const b64 = await fetchB64(getPhotoUrl(r));
-            const imgCell = `<td style="padding:3px;border:1px solid #e2e8f0;text-align:center;vertical-align:middle;background:${bg};">${b64 ? `<img src="${b64}" width="48" height="48" style="border-radius:4px;display:block;" />` : '—'}</td>`;
-            return `<tr>
-                ${imgCell}
-                ${td(x(r.fullName))}
-                ${td(r.aadhar)}
-                ${td(r.age)}
-                ${td(x(r.gender))}
-                ${td(formatDate(r.dob))}
-                ${td(x(r.bloodGroup))}
-                ${td(x(r.state))}
-                ${td(x(r.district))}
-                ${td(x(r.address))}
-                ${td(x(r.contractor))}
-                ${td(x(r.laborCamp))}
-                ${td(x(r.subContractor))}
-                ${td(r.subContractorContact)}
-                ${td(x(r.designation))}
-                ${td(r.contact)}
-                ${td(x(r.site))}
-                ${td(x(r.operator))}
-                ${td(formatDate(r.doi))}
-                ${td(formatDate(r.validity))}
-                ${td(formatDate(r.issueDate))}
-                ${td(x(r.aadharVerified || 'No'))}
-                ${td(fmtTime(r.createdAt))}
-            </tr>`;
-        }));
+        // Fetch photos in small concurrent batches — firing all requests at once for large
+        // record sets blows past the server's per-IP rate limit and fails the whole export.
+        const PHOTO_BATCH_SIZE = 8;
+        const dataRows = [];
+        for (let start = 0; start < records.length; start += PHOTO_BATCH_SIZE) {
+            const batch = records.slice(start, start + PHOTO_BATCH_SIZE);
+            btn.textContent = `Preparing… (${Math.min(start + PHOTO_BATCH_SIZE, records.length)}/${records.length})`;
+            const batchRows = await Promise.all(batch.map(async (r, bi) => {
+                const i = start + bi;
+                const bg = i % 2 === 0 ? '#fff' : '#f8fafc';
+                const td = v => `<td style="padding:5px 9px;border:1px solid #e2e8f0;vertical-align:middle;font-size:10px;background:${bg};">${v||'---'}</td>`;
+                const b64 = await fetchB64(getPhotoUrl(r));
+                const imgCell = `<td style="padding:3px;border:1px solid #e2e8f0;text-align:center;vertical-align:middle;background:${bg};">${b64 ? `<img src="${b64}" width="48" height="48" style="border-radius:4px;display:block;" />` : '—'}</td>`;
+                return `<tr>
+                    ${imgCell}
+                    ${td(x(r.fullName))}
+                    ${td(r.aadhar)}
+                    ${td(r.age)}
+                    ${td(x(r.gender))}
+                    ${td(formatDate(r.dob))}
+                    ${td(x(r.bloodGroup))}
+                    ${td(x(r.state))}
+                    ${td(x(r.district))}
+                    ${td(x(r.address))}
+                    ${td(x(r.contractor))}
+                    ${td(x(r.laborCamp))}
+                    ${td(x(r.subContractor))}
+                    ${td(r.subContractorContact)}
+                    ${td(x(r.designation))}
+                    ${td(r.contact)}
+                    ${td(x(r.site))}
+                    ${td(x(r.operator))}
+                    ${td(formatDate(r.doi))}
+                    ${td(formatDate(r.validity))}
+                    ${td(formatDate(r.issueDate))}
+                    ${td(x(r.aadharVerified || 'No'))}
+                    ${td(fmtTime(r.createdAt))}
+                </tr>`;
+            }));
+            dataRows.push(...batchRows);
+        }
 
         const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <title>Parichay Records With Photos</title>
@@ -1223,6 +1233,7 @@ function _toggleSelection(key, value, checked) {
 }
 
 function _updateBulkToolbar(key, listId, total) {
+    if (!_manageSelections[key]) return; // key doesn't support bulk-select (e.g. sites)
     const selected = _manageSelections[key].size;
     const countEl = document.getElementById(`bulkCount-${key}`);
     const deleteBtn = document.getElementById(`btnBulkDelete-${key}`);

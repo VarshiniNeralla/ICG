@@ -96,7 +96,15 @@ app.use(cors({
 
 app.use(bodyParser.json({ limit: '5mb' }));
 
-// Rate limiting — 300 requests per 15 min per IP
+// Rate limiting — 300 requests per 15 min per IP.
+// /api/imgproxy gets its own, higher-volume bucket: exporting records "with photos"
+// makes one imgproxy call per record, which can be hundreds in a single legitimate export
+// and would otherwise exhaust the shared budget for every other admin action.
+app.use('/api/imgproxy', inlineRateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 2000,
+    message: { error: 'Too many image requests, please try again later.' }
+}));
 app.use('/api/', inlineRateLimit({
     windowMs: 15 * 60 * 1000,
     max: 300,
