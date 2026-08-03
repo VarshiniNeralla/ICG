@@ -143,10 +143,11 @@ const SITE_ADMINS = {
     'admin@nishada.mhc.in':  { password: 'admin@nishada',  site: 'Nishada' },
     'admin@vipina.mhc.in':   { password: 'admin@vipina',   site: 'Vipina' },
     'admin@ttpl.mhc.in':     { password: 'admin@ttpl',     site: 'TTPL' },
+    'admin@apas.mhc.in':     { password: 'admin@apas',     site: 'Apas' },
 };
 
 const VALID_OPERATORS = [
-    'CSO-Udyan', 'CSO-Vyoma', 'CSO-Nishada', 'CSO-Vipina', 'CSO-TTPL'
+    'CSO-Udyan', 'CSO-Vyoma', 'CSO-Nishada', 'CSO-Vipina', 'CSO-TTPL', 'CSO-Apas'
 ];
 
 function getOperatorPassword(username) {
