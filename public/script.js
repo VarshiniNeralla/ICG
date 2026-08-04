@@ -1429,7 +1429,7 @@
             { l: 'AADHAR', v: data.aadhar, x: 65 }, { l: 'GENDER', v: data.gender, x: 620 },
             { l: 'D.O.B-AGE', v: `${formatDate(data.dob)}-${data.age}y`, x: 65 }, { l: 'BLOOD GROUP', v: data.bloodGroup, x: 620 },
             { l: 'D.O.I', v: formatDate(data.doi), x: 65 }, { l: 'VALIDITY', v: formatDate(data.validity), x: 620 },
-            { l: 'ISSUE DATE', v: formatDate(data.issueDate), x: 65 }, { l: 'CONTACT', v: data.contact, x: 620 }
+            { l: 'SUPERVISOR CONTACT', v: data.subContractorContact || '', x: 65 }, { l: 'CONTACT', v: data.contact, x: 620 }
         ];
 
         ctx.textAlign = 'left';

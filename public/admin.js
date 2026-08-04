@@ -1361,7 +1361,7 @@ async function sortListAlpha(key, listId) {
 // Which site the super admin is currently editing (null = their own / site admin's site)
 let _manageSite = null;
 
-let _knownSites = ['Udyan', 'Vyoma', 'Nishada', 'Vipina', 'TTPL', 'Apas'];
+let _knownSites = ['Udyan', 'Vyoma', 'Nishada', 'Vipina', 'TTPL', 'Apas', 'Grava'];
 
 function getEffectiveSite() {
     // Site admin: always their own site (from session)
