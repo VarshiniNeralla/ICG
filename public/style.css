@@ -1131,6 +1131,36 @@ input[readonly] {
     gap: 1rem;
     margin-bottom: 1rem;
     min-height: 36px;
+    flex-wrap: wrap;
+}
+
+.site-records-search-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex: 1 1 220px;
+    min-width: 180px;
+    max-width: 360px;
+}
+
+.site-records-search-input {
+    flex: 1;
+    min-width: 0;
+    height: 34px;
+    padding: 0 0.75rem;
+    border: 1.5px solid #dfe8f5;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-family: inherit;
+    font-weight: 600;
+    color: var(--text);
+    background: #fff;
+}
+
+.site-records-search-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(26, 60, 110, 0.08);
 }
 
 /* ── Auto-download scheduler ── */
@@ -1578,6 +1608,88 @@ input[readonly] {
 
 .data-table tbody tr:hover {
     background: #f8fafc;
+}
+
+.btn-regen-card {
+    padding: 0.35rem 0.7rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    font-family: inherit;
+    border-radius: 6px;
+    border: 1.5px solid var(--primary, #1a3c6e);
+    background: #fff;
+    color: var(--primary, #1a3c6e);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s;
+}
+.btn-regen-card:hover:not(:disabled) {
+    background: var(--primary, #1a3c6e);
+    color: #fff;
+}
+.btn-regen-card:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+/* ─── SITE RECORDS PAGINATION ───────────────────────────────────── */
+.records-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    padding: 0.15rem 0.25rem;
+}
+
+.records-pagination-info {
+    font-size: 0.78rem;
+    color: var(--text-light);
+    font-weight: 600;
+}
+
+.records-pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.pg-btn {
+    min-width: 34px;
+    height: 34px;
+    padding: 0 0.5rem;
+    border-radius: 8px;
+    border: 1.5px solid #dfe8f5;
+    background: #fff;
+    color: var(--primary);
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.pg-btn:hover:not(:disabled):not(.pg-btn--active) {
+    background: #eef4ff;
+    border-color: var(--primary);
+}
+
+.pg-btn--active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+    cursor: default;
+}
+
+.pg-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.pg-ellipsis {
+    padding: 0 0.25rem;
+    color: var(--text-light);
+    font-weight: 700;
 }
 
 /* Scrollbar for records wrap */

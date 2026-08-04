@@ -464,7 +464,12 @@
                         </div>
                         <span class="schedule-status" id="scheduleStatus"></span>
                     </div>
-                    <!-- Centre: record count -->
+                    <!-- Centre: search + count -->
+                    <div class="site-records-search-wrap">
+                        <input type="search" id="siteRecordsSearch" class="site-records-search-input"
+                            placeholder="Search name, aadhar, contact…" aria-label="Search records" />
+                        <button type="button" class="btn btn-primary btn-xs" id="btnSiteRecordsSearch">Search</button>
+                    </div>
                     <span id="siteRecordsCount" style="display:none; background:#eef4ff; color:#1a3c6e; font-size:0.75rem; font-weight:800; padding:0.28rem 0.85rem; border-radius:20px; border:1.5px solid #c7d9f8; letter-spacing:0.03em; white-space:nowrap; align-self:center;"></span>
                     <!-- Right: export dropdown -->
                     <div class="export-dropdown-wrap" id="exportDropdownWrap">
@@ -511,12 +516,17 @@
                                 <th>Validity</th>
                                 <th>Issue Date</th>
                                 <th>Aadhar Verified</th>
+                                <th>Action</th>
                             </tr>
                         </thead>
                         <tbody id="siteRecordsBody">
                             <!-- Records will be loaded here -->
                         </tbody>
                     </table>
+                </div>
+                <div class="records-pagination" id="siteRecordsPagination" style="display:none;">
+                    <span class="records-pagination-info" id="siteRecordsPaginationInfo"></span>
+                    <div class="records-pagination-controls" id="siteRecordsPaginationControls"></div>
                 </div>
             </div>
         </div>
@@ -574,7 +584,7 @@
 
     <script src="xlsx.min.js"></script>
     <script src="states-districts.js"></script>
-    <script src="script.js"></script>
+    <script src="script.js?v=regen-sup-contact"></script>
 </body>
 
 </html>

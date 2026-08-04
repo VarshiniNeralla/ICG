@@ -1367,8 +1367,9 @@
         ctx.restore();
     }
 
-    async function renderCard() {
-        const data = getFormData();
+    async function renderCard(dataOverride, photoOverride) {
+        const data = dataOverride || getFormData();
+        const photoSrc = photoOverride !== undefined ? photoOverride : capturedPhotoDataURL;
         const ctx = idCard.getContext('2d');
 
         idCard.width = CR80_W * PRINT_SCALE;
@@ -1389,7 +1390,7 @@
         ctx.stroke();
 
         ctx.textAlign = 'center'; ctx.font = '800 66px Inter'; ctx.fillStyle = '#1a3c6e';
-        ctx.fillText(data.contractor.toUpperCase(), CR80_W / 2, 90, 720);
+        ctx.fillText((data.contractor || '').toUpperCase(), CR80_W / 2, 90, 720);
 
         ctx.textAlign = 'right'; ctx.font = 'bold 46px Inter';
         if (data.laborCamp === 'LC') {
@@ -1401,9 +1402,9 @@
 
         /* Tall portrait slot; drawImageCover scales uniformly to fill it (no stretch), clips excess like a zoomed crop */
         const phY = 160, phW = 435, phH = 575, phX = (CR80_W - phW) / 2;
-        if (capturedPhotoDataURL) {
+        if (photoSrc) {
             try {
-                const ph = await loadImage(capturedPhotoDataURL);
+                const ph = await loadImage(photoSrc);
                 ctx.save();
                 ctx.beginPath(); ctx.roundRect(phX, phY, phW, phH, 15); ctx.clip();
                 ctx.fillStyle = '#ffffff';
@@ -1416,20 +1417,24 @@
         }
 
         ctx.textAlign = 'center'; ctx.fillStyle = '#0d2240';
-        ctx.font = 'bold 58px Inter'; ctx.fillText(data.fullName.toUpperCase(), CR80_W / 2, phY + phH + 85);
+        ctx.font = 'bold 58px Inter'; ctx.fillText((data.fullName || '').toUpperCase(), CR80_W / 2, phY + phH + 85);
 
         ctx.font = '800 44px Inter'; ctx.fillStyle = '#000000';
-        ctx.fillText(data.designation.toUpperCase(), CR80_W / 2, phY + phH + 150);
+        ctx.fillText((data.designation || '').toUpperCase(), CR80_W / 2, phY + phH + 150);
 
         ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 4;
         ctx.beginPath(); ctx.moveTo(65, phY + phH + 200); ctx.lineTo(CR80_W - 65, phY + phH + 200); ctx.stroke();
 
         const ty = phY + phH + 265;
+        // Card print fields — supervisor contact (thekedar number) replaces issue date
+        const supervisorContact = String(
+            data.subContractorContact || data.thekedarContact || data.supervisorContact || ''
+        ).trim();
         const items = [
-            { l: 'AADHAR', v: data.aadhar, x: 65 }, { l: 'GENDER', v: data.gender, x: 620 },
-            { l: 'D.O.B-AGE', v: `${formatDate(data.dob)}-${data.age}y`, x: 65 }, { l: 'BLOOD GROUP', v: data.bloodGroup, x: 620 },
+            { l: 'AADHAR', v: data.aadhar || '', x: 65 }, { l: 'GENDER', v: data.gender || '', x: 620 },
+            { l: 'D.O.B-AGE', v: `${formatDate(data.dob)}-${data.age || ''}y`, x: 65 }, { l: 'BLOOD GROUP', v: data.bloodGroup || '', x: 620 },
             { l: 'D.O.I', v: formatDate(data.doi), x: 65 }, { l: 'VALIDITY', v: formatDate(data.validity), x: 620 },
-            { l: 'SUPERVISOR CONTACT', v: data.subContractorContact || '', x: 65 }, { l: 'CONTACT', v: data.contact, x: 620 }
+            { l: 'SUPERVISOR CONTACT', v: supervisorContact, x: 65 }, { l: 'CONTACT', v: data.contact || '', x: 620 }
         ];
 
         ctx.textAlign = 'left';
@@ -1439,13 +1444,118 @@
 
             ctx.font = 'bold 36px Inter'; ctx.fillStyle = '#334155';
             ctx.fillText(item.l, item.x, yCoord);
-            ctx.font = '800 58px Inter'; ctx.fillStyle = '#000000'; ctx.fillText(item.v, item.x, yCoord + 55);
+            ctx.font = '800 58px Inter'; ctx.fillStyle = '#000000';
+            ctx.fillText(String(item.v == null ? '' : item.v), item.x, yCoord + 55);
 
             if (i % 2 === 0 && row < 3) {
                 ctx.strokeStyle = '#f1f5f9'; ctx.lineWidth = 3;
                 ctx.beginPath(); ctx.moveTo(65, yCoord + 80); ctx.lineTo(CR80_W - 65, yCoord + 80); ctx.stroke();
             }
         });
+    }
+
+    function pushCurrentCardToBatch() {
+        if (batchQueue.length >= 9) {
+            showAlert('Batch full (max 9). Print or clear some cards first.');
+            return false;
+        }
+        const proxyCanvas = document.createElement('canvas');
+        proxyCanvas.width = CR80_W;
+        proxyCanvas.height = CR80_H;
+        const pCtx = proxyCanvas.getContext('2d');
+        pCtx.drawImage(idCard, 0, 0, proxyCanvas.width, proxyCanvas.height);
+        batchQueue.push({
+            preview: proxyCanvas.toDataURL('image/jpeg', 0.92),
+            print: idCard.toDataURL('image/png')
+        });
+        updateBatchUI();
+        return true;
+    }
+
+    async function fetchRecordPhotoDataURL(record) {
+        if (!record || !record.photoPath) return null;
+        if (record.photoPath.startsWith('data:')) return record.photoPath;
+
+        const photoSrc = record.photoPath.startsWith('http')
+            ? record.photoPath
+            : `${API_BASE}/${record.photoPath.replace(/\\/g, '/')}`;
+
+        // Cloudinary URLs must go through imgproxy (CORS); local/same-origin can load directly
+        if (photoSrc.startsWith('https://res.cloudinary.com/')) {
+            try {
+                const r = await fetch(`${API_BASE}/api/imgproxy?url=${encodeURIComponent(photoSrc)}`, {
+                    headers: authHeaders()
+                });
+                if (!r.ok) return null;
+                const j = await r.json();
+                return j.b64 ? `data:${j.ct};base64,${j.b64}` : null;
+            } catch {
+                return null;
+            }
+        }
+
+        try {
+            const img = await loadImage(photoSrc);
+            const c = document.createElement('canvas');
+            c.width = img.naturalWidth || img.width;
+            c.height = img.naturalHeight || img.height;
+            c.getContext('2d').drawImage(img, 0, 0);
+            return c.toDataURL('image/jpeg', 0.95);
+        } catch {
+            return null;
+        }
+    }
+
+    async function regenerateRecordToBatch(recordIndex, btnEl) {
+        const record = _siteRecordsCache[recordIndex];
+        if (!record) return showAlert('Record not found.');
+        if (batchQueue.length >= 9) return showAlert('Batch full (max 9). Print or clear some cards first.');
+        if (!idCard) return showAlert('Card canvas not ready. Please refresh and try again.');
+
+        const origText = btnEl ? btnEl.textContent : '';
+        if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
+
+        try {
+            const photo = await fetchRecordPhotoDataURL(record);
+            if (!photo) {
+                showAlert('Cannot regenerate — this record has no usable photo.');
+                return;
+            }
+            // Rebuild card from saved record only — same layout as new cards (supervisor contact, not issue date)
+            const cardData = {
+                contractor: record.contractor || '',
+                laborCamp: record.laborCamp || '',
+                fullName: record.fullName || '',
+                designation: record.designation || '',
+                aadhar: record.aadhar || '',
+                gender: record.gender || '',
+                dob: record.dob || '',
+                age: record.age || '',
+                bloodGroup: record.bloodGroup || '',
+                doi: record.doi || '',
+                validity: record.validity || '',
+                subContractorContact: record.subContractorContact || '',
+                contact: record.contact || ''
+            };
+            await renderCard(cardData, photo);
+            if (!pushCurrentCardToBatch()) return;
+
+            const recordsModal = document.getElementById('recordsModal');
+            if (recordsModal) recordsModal.style.display = 'none';
+
+            const mainMain = document.querySelector('.app-main');
+            if (mainMain) {
+                mainMain.classList.remove('layout-initial', 'layout-preview');
+                mainMain.classList.add('layout-batch');
+            }
+            showToast(`Card for ${record.fullName || 'employee'} added to batch.`, 'success');
+            if (batchQueue.length >= 9) showBatchFullAlert();
+        } catch (err) {
+            console.error('Regenerate failed:', err);
+            showAlert('Failed to regenerate card. Please try again.');
+        } finally {
+            if (btnEl) { btnEl.disabled = false; btnEl.textContent = origText || 'Regenerate'; }
+        }
     }
 
     function showToast(msg, type = 'warning') {
@@ -1712,6 +1822,59 @@
 
     // ------ SITE RECORDS FOR OPERATORS ------
     let _siteRecordsCache = [];
+    let _siteRecordsPage = 1;
+    let _siteRecordsQuery = '';
+    const SITE_RECORDS_PER_PAGE = 7;
+
+    async function fetchAllSiteRecords(site) {
+        const PAGE_SIZE = 500; // server clamps limit to 500
+        const all = [];
+        let page = 1;
+        let pages = 1;
+        do {
+            const resp = await fetch(
+                `${API_BASE}/api/employees?site=${encodeURIComponent(site)}&page=${page}&limit=${PAGE_SIZE}`,
+                { headers: authHeaders() }
+            );
+            if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+            const result = await resp.json();
+            const chunk = result.data || result;
+            all.push(...chunk);
+            pages = result.pages || 1;
+            page++;
+        } while (page <= pages);
+        return all;
+    }
+
+    function recordMatchesSearch(r, q) {
+        if (!q) return true;
+        const haystack = [
+            r.fullName, r.aadhar, r.age, r.gender, r.dob, r.bloodGroup,
+            r.state, r.district, r.address, r.contractor, r.laborCamp,
+            r.subContractor, r.subContractorContact, r.designation, r.contact,
+            r.doi, r.validity, r.issueDate, r.aadharVerified, r.site, r.operator
+        ].map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
+        return haystack.includes(q);
+    }
+
+    function getFilteredSiteRecords() {
+        const q = (_siteRecordsQuery || '').trim().toLowerCase();
+        if (!q) {
+            return _siteRecordsCache.map((r, cacheIdx) => ({ r, cacheIdx }));
+        }
+        const out = [];
+        _siteRecordsCache.forEach((r, cacheIdx) => {
+            if (recordMatchesSearch(r, q)) out.push({ r, cacheIdx });
+        });
+        return out;
+    }
+
+    function applySiteRecordsSearch() {
+        const input = document.getElementById('siteRecordsSearch');
+        _siteRecordsQuery = input ? input.value : '';
+        _siteRecordsPage = 1;
+        renderSiteRecordsPage();
+    }
 
     async function loadSiteRecords() {
         const site = operator.site;
@@ -1720,30 +1883,30 @@
         document.getElementById('siteRecordsTitle').innerHTML = `${esc(site)} | Op: <strong>${esc(operator.name)}</strong>`;
         const countBadge = document.getElementById('siteRecordsCount');
         if (countBadge) { countBadge.style.display = 'none'; countBadge.textContent = ''; }
+        const pager = document.getElementById('siteRecordsPagination');
+        if (pager) pager.style.display = 'none';
+        const searchInput = document.getElementById('siteRecordsSearch');
+        if (searchInput) searchInput.value = '';
+        _siteRecordsQuery = '';
         document.getElementById('recordsModal').style.display = 'flex';
         const tbody = document.getElementById('siteRecordsBody');
-        tbody.innerHTML = '<tr><td colspan="20" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="21" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
 
         try {
-            const resp = await fetch(`${API_BASE}/api/employees?site=${encodeURIComponent(site)}`, {
-                headers: authHeaders()
-            });
-            if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
-            const result = await resp.json();
-            const records = result.data || result;
-            tbody.innerHTML = '';
-
-            if (countBadge) {
-                countBadge.textContent = `${records.length} ${records.length === 1 ? 'employee' : 'employees'}`;
-                countBadge.style.display = '';
-            }
+            const records = await fetchAllSiteRecords(site);
 
             if (records.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="20" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
+                _siteRecordsCache = [];
+                tbody.innerHTML = '<tr><td colspan="21" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
+                if (countBadge) {
+                    countBadge.textContent = '0 employees';
+                    countBadge.style.display = '';
+                }
                 return;
             }
 
             _siteRecordsCache = records;
+            _siteRecordsPage = 1;
 
             // Prune local records whose aadhar now exists on the server (successfully synced)
             const serverAadhars = new Set(records.map(r => r.aadhar));
@@ -1754,36 +1917,123 @@
                 if (remaining.length !== local.length) localStorage.setItem(key, JSON.stringify(remaining));
             } catch { /* ignore */ }
 
-            records.forEach(r => {
-                const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API_BASE}/${r.photoPath.replace(/\\/g, '/')}`) : '';
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>${photoSrc ? `<img src="${esc(photoSrc)}" style="width:40px; height:50px; border-radius:4px; object-fit:cover;" />` : 'N/A'}</td>
-                    <td>${esc(r.fullName) || '---'}</td>
-                    <td>${esc(r.aadhar) || '---'}</td>
-                    <td>${esc(r.age) || '---'}</td>
-                    <td>${esc(r.gender) || '---'}</td>
-                    <td>${esc(formatDate(r.dob))}</td>
-                    <td>${esc(r.bloodGroup) || '---'}</td>
-                    <td>${esc(r.state) || '---'}</td>
-                    <td>${esc(r.district) || '---'}</td>
-                    <td>${esc(r.address) || '---'}</td>
-                    <td>${esc(r.contractor) || '---'}</td>
-                    <td>${esc(r.laborCamp) || '---'}</td>
-                    <td>${esc(r.subContractor) || '---'}</td>
-                    <td>${esc(r.subContractorContact) || '---'}</td>
-                    <td>${esc(r.designation) || '---'}</td>
-                    <td>${esc(r.contact) || '---'}</td>
-                    <td>${esc(formatDate(r.doi))}</td>
-                    <td>${esc(formatDate(r.validity))}</td>
-                    <td>${esc(formatDate(r.issueDate))}</td>
-                    <td>${esc(r.aadharVerified) || 'No'}</td>`;
-                tbody.appendChild(tr);
-            });
+            renderSiteRecordsPage();
         } catch (err) {
             console.error('Failed to load site records:', err);
-            tbody.innerHTML = '<tr><td colspan="20" style="text-align:center; padding:2rem; color:red;">Error loading records.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="21" style="text-align:center; padding:2rem; color:red;">Error loading records.</td></tr>';
         }
+    }
+
+    function goToSiteRecordsPage(page) {
+        const filtered = getFilteredSiteRecords();
+        const totalPages = Math.max(1, Math.ceil(filtered.length / SITE_RECORDS_PER_PAGE));
+        _siteRecordsPage = Math.min(Math.max(1, page), totalPages);
+        renderSiteRecordsPage();
+        document.getElementById('siteRecordsTable')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function renderSiteRecordsPage() {
+        const tbody = document.getElementById('siteRecordsBody');
+        if (!tbody) return;
+
+        const filtered = getFilteredSiteRecords();
+        const total = filtered.length;
+        const totalAll = _siteRecordsCache.length;
+        const totalPages = Math.max(1, Math.ceil(total / SITE_RECORDS_PER_PAGE));
+        if (_siteRecordsPage > totalPages) _siteRecordsPage = totalPages;
+        if (_siteRecordsPage < 1) _siteRecordsPage = 1;
+
+        const countBadge = document.getElementById('siteRecordsCount');
+        if (countBadge) {
+            const q = (_siteRecordsQuery || '').trim();
+            if (q) {
+                countBadge.textContent = `${total} match${total === 1 ? '' : 'es'} of ${totalAll}`;
+            } else {
+                countBadge.textContent = `${totalAll} ${totalAll === 1 ? 'employee' : 'employees'}`;
+            }
+            countBadge.style.display = '';
+        }
+
+        if (total === 0) {
+            tbody.innerHTML = `<tr><td colspan="21" style="text-align:center; padding:2rem; color:var(--text-light);">${
+                (_siteRecordsQuery || '').trim() ? 'No records match your search.' : 'No records found for this site.'
+            }</td></tr>`;
+            renderSiteRecordsPagination(1, 0);
+            return;
+        }
+
+        const start = (_siteRecordsPage - 1) * SITE_RECORDS_PER_PAGE;
+        const pageRecords = filtered.slice(start, start + SITE_RECORDS_PER_PAGE);
+
+        tbody.innerHTML = '';
+        pageRecords.forEach(({ r, cacheIdx }) => {
+            const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API_BASE}/${r.photoPath.replace(/\\/g, '/')}`) : '';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${photoSrc ? `<img src="${esc(photoSrc)}" style="width:40px; height:50px; border-radius:4px; object-fit:cover;" />` : 'N/A'}</td>
+                <td>${esc(r.fullName) || '---'}</td>
+                <td>${esc(r.aadhar) || '---'}</td>
+                <td>${esc(r.age) || '---'}</td>
+                <td>${esc(r.gender) || '---'}</td>
+                <td>${esc(formatDate(r.dob))}</td>
+                <td>${esc(r.bloodGroup) || '---'}</td>
+                <td>${esc(r.state) || '---'}</td>
+                <td>${esc(r.district) || '---'}</td>
+                <td>${esc(r.address) || '---'}</td>
+                <td>${esc(r.contractor) || '---'}</td>
+                <td>${esc(r.laborCamp) || '---'}</td>
+                <td>${esc(r.subContractor) || '---'}</td>
+                <td>${esc(r.subContractorContact) || '---'}</td>
+                <td>${esc(r.designation) || '---'}</td>
+                <td>${esc(r.contact) || '---'}</td>
+                <td>${esc(formatDate(r.doi))}</td>
+                <td>${esc(formatDate(r.validity))}</td>
+                <td>${esc(formatDate(r.issueDate))}</td>
+                <td>${esc(r.aadharVerified) || 'No'}</td>
+                <td><button type="button" class="btn-regen-card" data-record-idx="${cacheIdx}">Regenerate</button></td>`;
+            tbody.appendChild(tr);
+        });
+        tbody.querySelectorAll('.btn-regen-card').forEach(btn => {
+            btn.onclick = () => regenerateRecordToBatch(Number(btn.dataset.recordIdx), btn);
+        });
+
+        renderSiteRecordsPagination(totalPages, total);
+    }
+
+    function renderSiteRecordsPagination(totalPages, totalOverride) {
+        const wrap = document.getElementById('siteRecordsPagination');
+        const info = document.getElementById('siteRecordsPaginationInfo');
+        const controls = document.getElementById('siteRecordsPaginationControls');
+        if (!wrap || !info || !controls) return;
+
+        const total = totalOverride !== undefined ? totalOverride : getFilteredSiteRecords().length;
+        if (total === 0) { wrap.style.display = 'none'; return; }
+        wrap.style.display = 'flex';
+
+        const start = (_siteRecordsPage - 1) * SITE_RECORDS_PER_PAGE + 1;
+        const end = Math.min(_siteRecordsPage * SITE_RECORDS_PER_PAGE, total);
+        info.textContent = `Showing ${start}–${end} of ${total} records`;
+
+        const pages = [];
+        for (let p = 1; p <= totalPages; p++) {
+            if (p === 1 || p === totalPages || Math.abs(p - _siteRecordsPage) <= 1) pages.push(p);
+            else if (pages[pages.length - 1] !== '…') pages.push('…');
+        }
+
+        const btn = (label, page, opts = {}) => `<button type="button" class="pg-btn${opts.active ? ' pg-btn--active' : ''}"
+            ${opts.disabled ? 'disabled' : ''} ${page !== undefined ? `data-page="${page}"` : ''}>${label}</button>`;
+
+        let html = '';
+        html += btn('&laquo;', _siteRecordsPage - 1, { disabled: _siteRecordsPage === 1 });
+        pages.forEach(p => {
+            html += p === '…' ? '<span class="pg-ellipsis">…</span>' : btn(p, p, { active: p === _siteRecordsPage });
+        });
+        html += btn('&raquo;', _siteRecordsPage + 1, { disabled: _siteRecordsPage === totalPages });
+
+        controls.innerHTML = html;
+        controls.querySelectorAll('button[data-page]').forEach(b => {
+            b.onclick = () => goToSiteRecordsPage(Number(b.dataset.page));
+        });
     }
 
     function getSiteDateStr() {
@@ -2041,6 +2291,22 @@
         const closeRecords = document.getElementById('closeRecords');
 
         if (btnViewRecords) btnViewRecords.onclick = () => { loadSiteRecords(); initScheduleUI(); };
+
+        const btnSiteSearch = document.getElementById('btnSiteRecordsSearch');
+        const siteSearchInput = document.getElementById('siteRecordsSearch');
+        if (btnSiteSearch) btnSiteSearch.onclick = () => applySiteRecordsSearch();
+        if (siteSearchInput) {
+            siteSearchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    applySiteRecordsSearch();
+                }
+            });
+            // Live filter as user clears/types (case-insensitive)
+            siteSearchInput.addEventListener('input', () => {
+                if (!siteSearchInput.value.trim()) applySiteRecordsSearch();
+            });
+        }
         if (closeRecords) closeRecords.onclick = () => document.getElementById('recordsModal').style.display = 'none';
 
         // Export dropdown
@@ -2178,21 +2444,9 @@
             if (isInBatch) {
                 return showAlert("This card is already added to the batch! Move to 'Next Entry'.");
             }
-            if (batchQueue.length >= 9) return showAlert('Batch full.');
-
-            // Store preview (JPEG for localStorage) and print (PNG, memory-only) together
-            const proxyCanvas = document.createElement('canvas');
-            proxyCanvas.width = CR80_W;
-            proxyCanvas.height = CR80_H;
-            const pCtx = proxyCanvas.getContext('2d');
-            pCtx.drawImage(idCard, 0, 0, proxyCanvas.width, proxyCanvas.height);
-            batchQueue.push({
-                preview: proxyCanvas.toDataURL('image/jpeg', 0.92),
-                print: idCard.toDataURL('image/png')
-            });
+            if (!pushCurrentCardToBatch()) return;
 
             isInBatch = true;
-            updateBatchUI();
             btnAddToBatch.style.display = 'none';
 
             // Attempt save in background if not already done
