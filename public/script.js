@@ -116,6 +116,70 @@
     let capturedPhotoDataURL = null;
     let currentStep = 1;
     let batchQueue = [];       // Each item: { preview: jpegDataURL, print: pngDataURL }
+
+    function getBatchStorageKey(site) {
+        const s = site || operator.site || '';
+        return s ? `ep_batch_${s}` : 'ep_batch';
+    }
+
+    function persistBatchQueue() {
+        if (!operator.site) return;
+        const key = getBatchStorageKey();
+        try {
+            // Prefer keeping print PNG when quota allows; fall back to preview-only
+            const withPrint = batchQueue.map(item => ({
+                preview: item.preview,
+                print: item.print || item.preview
+            }));
+            localStorage.setItem(key, JSON.stringify(withPrint));
+        } catch {
+            try {
+                const previewOnly = batchQueue.map(item => ({ preview: item.preview }));
+                localStorage.setItem(key, JSON.stringify(previewOnly));
+            } catch (e) {
+                console.warn('Batch too large for localStorage, keeping in memory only.');
+            }
+        }
+        // Clean up legacy unscoped key after migrating to site-scoped storage
+        try { localStorage.removeItem('ep_batch'); } catch { /* ignore */ }
+    }
+
+    function restoreBatchQueue() {
+        if (!operator.site) {
+            batchQueue = [];
+            return;
+        }
+        const key = getBatchStorageKey();
+        let raw = localStorage.getItem(key);
+        // One-time migrate from legacy global ep_batch
+        if (!raw) {
+            const legacy = localStorage.getItem('ep_batch');
+            if (legacy) {
+                raw = legacy;
+                try {
+                    localStorage.setItem(key, legacy);
+                    localStorage.removeItem('ep_batch');
+                } catch { /* ignore */ }
+            }
+        }
+        if (!raw) {
+            batchQueue = [];
+            return;
+        }
+        try {
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) throw new Error('invalid batch');
+            batchQueue = parsed.map(item => ({
+                preview: item.preview || '',
+                print: item.print || item.preview || ''
+            })).filter(item => item.preview);
+            updateBatchUI();
+        } catch {
+            console.warn('Corrupted batch data, clearing.');
+            localStorage.removeItem(key);
+            batchQueue = [];
+        }
+    }
     let stream = null;
     let photoPortraitSegmenter = null;
     let photoPortraitSegmenterPromise = null;
@@ -284,16 +348,9 @@
             mainApp.style.display = 'block';
             setDefaultDates();
             populateDropdowns();
-        }
-        const savedBatch = localStorage.getItem('ep_batch');
-        if (savedBatch) {
-            try {
-                batchQueue = JSON.parse(savedBatch);
-                updateBatchUI();
-            } catch {
-                console.warn('Corrupted batch data, clearing.');
-                localStorage.removeItem('ep_batch');
-            }
+            restoreBatchQueue();
+        } else {
+            batchQueue = [];
         }
         populateDropdowns();
     }
@@ -328,6 +385,7 @@
             mainApp.style.display = 'block';
             setDefaultDates();
             populateDropdowns();
+            restoreBatchQueue();
         } catch (err) {
             showAlert('Login failed. Please check your connection and try again.');
         }
@@ -348,8 +406,8 @@
 
     btnLogout.onclick = () => {
         void disposePortraitSegmenter();
+        // Keep batch cards in localStorage so they survive logout/login
         localStorage.removeItem('ep_operator');
-        localStorage.removeItem('ep_batch');
         window.location.reload();
     };
 
@@ -1658,9 +1716,7 @@
         });
 
         try {
-            // Only persist preview data to localStorage (print data is too large)
-            const storable = batchQueue.map(item => ({ preview: item.preview }));
-            localStorage.setItem('ep_batch', JSON.stringify(storable));
+            persistBatchQueue();
         } catch (e) {
             console.warn('Batch too large for localStorage, keeping in memory only.');
         }
