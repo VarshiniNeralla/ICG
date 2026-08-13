@@ -518,6 +518,7 @@
                                 <th>Induction</th>
                                 <th>Validity</th>
                                 <th>Issue Date</th>
+                                <th>Reissue Count</th>
                                 <th>Aadhar Verified</th>
                                 <th>Action</th>
                             </tr>
@@ -537,15 +538,17 @@
 
     <!-- DUPLICATE CONFIRMATION MODAL -->
     <div id="duplicateModal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-label="Duplicate Found">
-        <div class="modal-content" style="max-width: 420px; width: 100%;">
+        <div class="modal-content" style="max-width: 480px; width: 100%;">
             <div class="modal-header">
                 <h3 style="color: #92400e;">⚠️ Duplicate Found!</h3>
             </div>
             <div class="modal-body">
                 <p id="duplicateMessage" style="margin-bottom: 1rem;"></p>
                 <div id="existingRecordDetails"
-                    style="background: #fffbeb; border: 1px solid #fef3c7; padding: 1rem; border-radius: 12px; font-size: 0.85rem; text-align: left; margin-bottom: 1.5rem;">
+                    style="background: #fffbeb; border: 1px solid #fef3c7; padding: 1rem; border-radius: 12px; font-size: 0.85rem; text-align: left; margin-bottom: 0.75rem;">
                 </div>
+                <button type="button" id="btnViewMoreDuplicate" class="btn btn-secondary btn-sm" style="margin-bottom: 1rem;">View More Details</button>
+                <div id="existingRecordMoreDetails" style="display:none; background: #fffbeb; border: 1px solid #fef3c7; padding: 1rem; border-radius: 12px; font-size: 0.85rem; text-align: left; margin-bottom: 1rem; max-height: 240px; overflow-y: auto;"></div>
                 <p style="font-weight: 600; color: var(--text);">Generate this new pass anyway?</p>
             </div>
             <div class="modal-footer">
@@ -587,7 +590,7 @@
 
     <script src="xlsx.min.js"></script>
     <script src="states-districts.js"></script>
-    <script src="script.js?v=regen-sup-contact"></script>
+    <script src="script.js?v=reissue-doi-fix"></script>
 </body>
 
 </html>

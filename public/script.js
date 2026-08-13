@@ -1570,6 +1570,12 @@
         if (batchQueue.length >= 9) return showAlert('Batch full (max 9). Print or clear some cards first.');
         if (!idCard) return showAlert('Card canvas not ready. Please refresh and try again.');
 
+        const confirmed = await showConfirm(
+            `Reissue card for ${record.fullName || 'this employee'}? The D.O.I will be updated to today and the card will be added to the batch.`,
+            { confirmLabel: 'Reissue', cancelLabel: 'Cancel' }
+        );
+        if (!confirmed) return;
+
         const origText = btnEl ? btnEl.textContent : '';
         if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
 
@@ -1579,7 +1585,39 @@
                 showAlert('Cannot regenerate — this record has no usable photo.');
                 return;
             }
-            // Rebuild card from saved record only — same layout as new cards (supervisor contact, not issue date)
+
+            // Update D.O.I / issue date to today and increment reissue count on the server
+            const todayStr = formatDate(new Date().toISOString());
+            let newIssueDate = todayStr;
+            let newReissueCount = (record.reissueCount || 0) + 1;
+            const recordId = record._id || record.id;
+
+            if (recordId && !record._local) {
+                try {
+                    const resp = await fetch(`${API_BASE}/api/employees/${recordId}/reissue`, {
+                        method: 'POST',
+                        headers: authHeaders({ 'Content-Type': 'application/json' })
+                    });
+                    const result = await resp.json().catch(() => ({}));
+                    if (!resp.ok) {
+                        showAlert(result.error || 'Failed to update reissue record on server.');
+                        return;
+                    }
+                    newIssueDate = result.doi || result.issueDate || todayStr;
+                    newReissueCount = result.reissueCount != null ? result.reissueCount : newReissueCount;
+                } catch (err) {
+                    console.error('Reissue API failed:', err);
+                    showAlert('Failed to update reissue record. Please check your connection and try again.');
+                    return;
+                }
+            }
+
+            // Keep local cache in sync so table/export reflect the new D.O.I & count
+            record.doi = newIssueDate;
+            record.issueDate = newIssueDate;
+            record.reissueCount = newReissueCount;
+
+            // Rebuild card — D.O.I on the card must be today's reissue date
             const cardData = {
                 contractor: record.contractor || '',
                 laborCamp: record.laborCamp || '',
@@ -1590,8 +1628,9 @@
                 dob: record.dob || '',
                 age: record.age || '',
                 bloodGroup: record.bloodGroup || '',
-                doi: record.doi || '',
+                doi: newIssueDate,
                 validity: record.validity || '',
+                issueDate: newIssueDate,
                 subContractorContact: record.subContractorContact || '',
                 contact: record.contact || ''
             };
@@ -1606,7 +1645,7 @@
                 mainMain.classList.remove('layout-initial', 'layout-preview');
                 mainMain.classList.add('layout-batch');
             }
-            showToast(`Card for ${record.fullName || 'employee'} added to batch.`, 'success');
+            showToast(`Card for ${record.fullName || 'employee'} reissued and added to batch.`, 'success');
             if (batchQueue.length >= 9) showBatchFullAlert();
         } catch (err) {
             console.error('Regenerate failed:', err);
@@ -2011,7 +2050,7 @@
         }
 
         if (total === 0) {
-            tbody.innerHTML = `<tr><td colspan="21" style="text-align:center; padding:2rem; color:var(--text-light);">${
+            tbody.innerHTML = `<tr><td colspan="22" style="text-align:center; padding:2rem; color:var(--text-light);">${
                 (_siteRecordsQuery || '').trim() ? 'No records match your search.' : 'No records found for this site.'
             }</td></tr>`;
             renderSiteRecordsPagination(1, 0);
@@ -2045,6 +2084,7 @@
                 <td>${esc(formatDate(r.doi))}</td>
                 <td>${esc(formatDate(r.validity))}</td>
                 <td>${esc(formatDate(r.issueDate))}</td>
+                <td>${esc(String(r.reissueCount != null ? r.reissueCount : 0))}</td>
                 <td>${esc(r.aadharVerified) || 'No'}</td>
                 <td><button type="button" class="btn-regen-card" data-record-idx="${cacheIdx}">Regenerate</button></td>`;
             tbody.appendChild(tr);
@@ -2111,7 +2151,7 @@
     }
 
     function exportSiteXLS(withImages) {
-        const headers = ['Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Thekedar','Thekedar Contact','Designation','Contact','Induction','Validity','Issue Date','Aadhar Verified'];
+        const headers = ['Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Thekedar','Thekedar Contact','Designation','Contact','Induction','Validity','Issue Date','Reissue Count','Aadhar Verified'];
         const allRecords = _mergeWithLocalRecords(_siteRecordsCache);
         const rows = allRecords.map(r => {
             const row = {};
@@ -2133,6 +2173,7 @@
             row['Induction']   = formatDate(r.doi);
             row['Validity']    = formatDate(r.validity);
             row['Issue Date']  = formatDate(r.issueDate);
+            row['Reissue Count'] = r.reissueCount != null ? r.reissueCount : 0;
             row['Aadhar Verified'] = r.aadharVerified || 'No';
             return row;
         });
@@ -2172,7 +2213,7 @@
             } catch { return null; }
         }
 
-        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Thekedar','Thekedar Contact','Designation','Contact','Induction','Validity','Issue Date','Aadhar Verified'];
+        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Thekedar','Thekedar Contact','Designation','Contact','Induction','Validity','Issue Date','Reissue Count','Aadhar Verified'];
         const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
         const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
 
@@ -2194,6 +2235,7 @@
                 ${td(formatDate(r.dob))}${td(r.bloodGroup)}${td(r.state)}${td(r.district)}${td(r.address)}
                 ${td(r.contractor)}${td(r.laborCamp)}${td(r.subContractor)}${td(r.subContractorContact)}${td(r.designation)}${td(r.contact)}
                 ${td(formatDate(r.doi))}${td(formatDate(r.validity))}${td(formatDate(r.issueDate))}
+                ${td(String(r.reissueCount != null ? r.reissueCount : 0))}
                 ${td(r.aadharVerified || 'No')}
             </tr>`;
         }));
@@ -2589,19 +2631,57 @@
             const modal = document.getElementById('duplicateModal');
             const msg = document.getElementById('duplicateMessage');
             const details = document.getElementById('existingRecordDetails');
+            const moreDetails = document.getElementById('existingRecordMoreDetails');
+            const btnViewMore = document.getElementById('btnViewMoreDuplicate');
             const btnCont = document.getElementById('btnContinueDuplicate');
             const btnCancel = document.getElementById('btnCancelDuplicate');
+            const ex = dupData.existing || {};
 
             const field = dupData.matchedOn === 'both' ? 'Aadhar & Phone Number' : (dupData.matchedOn === 'aadhar' ? 'Aadhar Number' : 'Phone Number');
 
             msg.innerHTML = `This <strong>${field}</strong> already exists in the system for another employee.`;
 
             details.innerHTML = `
-                <div style="margin-bottom: 0.5rem;"><strong>Name:</strong> ${esc(dupData.existing.fullName)}</div>
-                <div style="margin-bottom: 0.5rem;"><strong>Site:</strong> ${esc(dupData.existing.site)}</div>
-                <div style="margin-bottom: 0.5rem;"><strong>Operator:</strong> ${esc(dupData.existing.operator)}</div>
-                <div><strong>Date:</strong> ${esc(formatDate(dupData.existing.createdAt))}</div>
+                <div style="margin-bottom: 0.5rem;"><strong>Name:</strong> ${esc(ex.fullName)}</div>
+                <div style="margin-bottom: 0.5rem;"><strong>Site:</strong> ${esc(ex.site)}</div>
+                <div style="margin-bottom: 0.5rem;"><strong>Operator:</strong> ${esc(ex.operator)}</div>
+                <div><strong>Date:</strong> ${esc(formatDate(ex.createdAt))}</div>
             `;
+
+            const detailRow = (label, value) => value
+                ? `<div style="margin-bottom: 0.4rem;"><strong>${label}:</strong> ${esc(String(value))}</div>`
+                : '';
+
+            moreDetails.innerHTML = `
+                ${detailRow('Aadhar', ex.aadhar)}
+                ${detailRow('Contact', ex.contact)}
+                ${detailRow('Age', ex.age)}
+                ${detailRow('Gender', ex.gender)}
+                ${detailRow('DOB', formatDate(ex.dob))}
+                ${detailRow('Blood Group', ex.bloodGroup)}
+                ${detailRow('State', ex.state)}
+                ${detailRow('District', ex.district)}
+                ${detailRow('Address', ex.address)}
+                ${detailRow('Contractor', ex.contractor)}
+                ${detailRow('Camp', ex.laborCamp)}
+                ${detailRow('Thekedar', ex.subContractor)}
+                ${detailRow('Thekedar Contact', ex.subContractorContact)}
+                ${detailRow('Designation', ex.designation)}
+                ${detailRow('Induction', formatDate(ex.doi))}
+                ${detailRow('Validity', formatDate(ex.validity))}
+                ${detailRow('Issue Date', formatDate(ex.issueDate))}
+                ${detailRow('Aadhar Verified', ex.aadharVerified || 'No')}
+                ${detailRow('Reissue Count', ex.reissueCount != null ? ex.reissueCount : 0)}
+            `;
+            moreDetails.style.display = 'none';
+            if (btnViewMore) {
+                btnViewMore.textContent = 'View More Details';
+                btnViewMore.onclick = () => {
+                    const open = moreDetails.style.display !== 'none';
+                    moreDetails.style.display = open ? 'none' : 'block';
+                    btnViewMore.textContent = open ? 'View More Details' : 'Hide Details';
+                };
+            }
 
             modal.style.display = 'flex';
 
@@ -2616,16 +2696,34 @@
         });
     }
     let _confirmReject = null;
-    function showConfirm(msg) {
+    function showConfirm(msg, options = {}) {
         // Reject any prior pending confirm to prevent race conditions
         if (_confirmReject) { _confirmReject(false); _confirmReject = null; }
         return new Promise((resolve) => {
             _confirmReject = () => { document.getElementById('confirmModal').style.display = 'none'; resolve(false); };
             document.getElementById('confirmMessage').textContent = msg;
             const modal = document.getElementById('confirmModal');
+            const yesBtn = document.getElementById('confirmYes');
+            const noBtn = document.getElementById('confirmNo');
+            const prevYes = yesBtn.textContent;
+            const prevNo = noBtn.textContent;
+            yesBtn.textContent = options.confirmLabel || 'Delete';
+            noBtn.textContent = options.cancelLabel || 'Cancel';
             modal.style.display = 'flex';
-            document.getElementById('confirmYes').onclick = () => { _confirmReject = null; modal.style.display = 'none'; resolve(true); };
-            document.getElementById('confirmNo').onclick = () => { _confirmReject = null; modal.style.display = 'none'; resolve(false); };
+            yesBtn.onclick = () => {
+                _confirmReject = null;
+                yesBtn.textContent = prevYes;
+                noBtn.textContent = prevNo;
+                modal.style.display = 'none';
+                resolve(true);
+            };
+            noBtn.onclick = () => {
+                _confirmReject = null;
+                yesBtn.textContent = prevYes;
+                noBtn.textContent = prevNo;
+                modal.style.display = 'none';
+                resolve(false);
+            };
         });
     }
 

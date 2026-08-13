@@ -727,7 +727,7 @@ function renderRecordsTable(records) {
     if (!tbody) return;
     tbody.innerHTML = '';
     if (records.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="23" style="text-align:center; padding:2rem; color:var(--text-light);">No records found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="24" style="text-align:center; padding:2rem; color:var(--text-light);">No records found</td></tr>';
         return;
     }
     records.forEach((r) => {
@@ -759,6 +759,7 @@ function renderRecordsTable(records) {
             <td class="record-muted">${esc(formatDate(r.doi))}</td>
             <td class="record-muted">${esc(formatDate(r.validity))}</td>
             <td class="record-muted">${esc(formatDate(r.issueDate))}</td>
+            <td class="record-muted">${esc(String(r.reissueCount != null ? r.reissueCount : 0))}</td>
             <td class="record-muted">${esc(r.aadharVerified) || 'No'}</td>
             <td class="record-created">${formatDateTime(r.createdAt)}</td>
             <td class="record-actions-cell"><button class="btn-delete" onclick="deleteRecord('${esc(r._id)}')">Delete</button></td>`;
@@ -885,8 +886,8 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
 
     function buildXLS(withPhoto, records) {
         const headers = withPhoto
-            ? ['Photo URL','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Thekedar','Thekedar Contact','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At']
-            : ['Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Thekedar','Thekedar Contact','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At'];
+            ? ['Photo URL','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Thekedar','Thekedar Contact','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Reissue Count','Aadhar Verified','Created At']
+            : ['Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Thekedar','Thekedar Contact','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Reissue Count','Aadhar Verified','Created At'];
 
         const rows = records.map(r => {
             const row = {};
@@ -911,6 +912,7 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
             row['DOI']          = formatDate(r.doi);
             row['Validity']     = formatDate(r.validity);
             row['Issue Date']   = formatDate(r.issueDate);
+            row['Reissue Count'] = r.reissueCount != null ? r.reissueCount : 0;
             row['Aadhar Verified'] = r.aadharVerified || 'No';
             row['Created At']   = fmtTime(r.createdAt);
             return row;
@@ -954,7 +956,7 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
         btn.textContent = 'Preparing…';
         btn.disabled = true;
 
-        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Thekedar','Thekedar Contact','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Aadhar Verified','Created At'];
+        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Labor Camp','Thekedar','Thekedar Contact','Designation','Contact','Site','Operator','DOI','Validity','Issue Date','Reissue Count','Aadhar Verified','Created At'];
         const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
         const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
 
@@ -1003,6 +1005,7 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
                     ${td(formatDate(r.doi))}
                     ${td(formatDate(r.validity))}
                     ${td(formatDate(r.issueDate))}
+                    ${td(String(r.reissueCount != null ? r.reissueCount : 0))}
                     ${td(x(r.aadharVerified || 'No'))}
                     ${td(fmtTime(r.createdAt))}
                 </tr>`;

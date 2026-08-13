@@ -273,6 +273,7 @@ const EmployeeSchema = new mongoose.Schema({
     operator: String,
     aadharVerified: { type: String, default: 'No' },
     photoPath: String,
+    reissueCount: { type: Number, default: 0 },
     createdAt: { type: Date, default: Date.now }
 });
 
@@ -358,13 +359,73 @@ app.post('/api/check-duplicate', requireAuth, async (req, res) => {
                 operator: existing.operator || 'N/A',
                 createdAt: existing.createdAt,
                 aadhar: existing.aadhar,
-                contact: existing.contact
+                contact: existing.contact,
+                age: existing.age || '',
+                gender: existing.gender || '',
+                dob: existing.dob || '',
+                bloodGroup: existing.bloodGroup || '',
+                state: existing.state || '',
+                district: existing.district || '',
+                address: existing.address || '',
+                contractor: existing.contractor || '',
+                laborCamp: existing.laborCamp || '',
+                subContractor: existing.subContractor || '',
+                subContractorContact: existing.subContractorContact || '',
+                designation: existing.designation || '',
+                doi: existing.doi || '',
+                validity: existing.validity || '',
+                issueDate: existing.issueDate || '',
+                aadharVerified: existing.aadharVerified || 'No',
+                reissueCount: existing.reissueCount || 0
             }
         });
     } catch (err) {
         // If check fails, let the operator proceed — never block
         console.error('Duplicate check failed:', err.message);
         res.json({ duplicate: false });
+    }
+});
+
+// ── Reissue / Regenerate card ────────────────────────────────────────────────
+app.post('/api/employees/:id/reissue', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'Invalid employee id' });
+        }
+
+        const employee = await Employee.findById(id);
+        if (!employee) return res.status(404).json({ error: 'Employee not found' });
+
+        // Operators may only reissue records for their own site
+        if (req.userSession.role === 'operator' && req.userSession.site
+            && employee.site && employee.site !== req.userSession.site) {
+            return res.status(403).json({ error: 'Not allowed to reissue records for another site' });
+        }
+        if (req.userSession.site && employee.site && employee.site !== req.userSession.site) {
+            return res.status(403).json({ error: 'Not allowed to reissue records for another site' });
+        }
+
+        const today = new Date();
+        const issueDate = `${String(today.getDate()).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${today.getFullYear()}`;
+        const reissueCount = (employee.reissueCount || 0) + 1;
+
+        // D.O.I on the printed card uses `doi` — update both so reissues show today's date
+        employee.doi = issueDate;
+        employee.issueDate = issueDate;
+        employee.reissueCount = reissueCount;
+        await employee.save();
+
+        res.json({
+            message: 'Card reissued',
+            doi: issueDate,
+            issueDate,
+            reissueCount,
+            employee
+        });
+    } catch (err) {
+        console.error('Reissue failed:', err.message);
+        res.status(500).json({ error: 'Failed to update reissue record' });
     }
 });
 
@@ -435,7 +496,8 @@ app.post('/api/save-employee', requireAuth, async (req, res) => {
                 site: otherData.site || '',
                 operator: otherData.operator || '',
                 aadharVerified: otherData.aadharVerified || 'No',
-                photoPath: finalPhotoPath
+                photoPath: finalPhotoPath,
+                reissueCount: 0
             });
 
             console.log(`[Backend ${reqID}] Final URL to be saved: ${finalPhotoPath}`);
