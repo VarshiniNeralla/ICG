@@ -145,16 +145,22 @@ const SITE_ADMINS = {
     'admin@ttpl.mhc.in':     { password: 'admin@ttpl',     site: 'TTPL' },
     'admin@apas.mhc.in':     { password: 'admin@apas',     site: 'Apas' },
     'admin@grava.mhc.in':    { password: 'admin@grava',    site: 'Grava' },
+    'admin@precast.mhc.in':  { password: 'admin@precast',  site: 'Precast' },
+    'admin@gravabusinesspark.mhc.in': { password: 'admin@gravabusinesspark', site: 'Grava Business Park' },
+    'admin@99.mhc.in':       { password: 'admin@99',       site: '99' },
+    'admin@hymarmc.mhc.in':  { password: 'admin@hymarmc',  site: 'Hyma RMC' },
 };
 
 const VALID_OPERATORS = [
-    'CSO-Udyan', 'CSO-Vyoma', 'CSO-Nishada', 'CSO-Vipina', 'CSO-TTPL', 'CSO-Apas', 'CSO-Grava'
+    'CSO-Udyan', 'CSO-Vyoma', 'CSO-Nishada', 'CSO-Vipina', 'CSO-TTPL', 'CSO-Apas', 'CSO-Grava',
+    'CSO-Precast', 'CSO-Grava Business Park', 'CSO-99', 'CSO-Hyma RMC'
 ];
 
 function getOperatorPassword(username) {
     const site = username.replace('CSO-', '');
     if (site === 'Grava Residences') return 'gravar@mhc26';
-    if (site === 'Grava Commercial') return 'gravac@mhc26';
+    if (site === 'Precast') return 'precast@mhc26';
+    if (site === 'Grava Business Park' || site === '99' || site === 'Hyma RMC') return 'myhome@26';
     return `${site.split(' ')[0].toLowerCase()}@mhc26`;
 }
 

@@ -1128,7 +1128,7 @@ input[readonly] {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    gap: 0.75rem 1rem;
     margin-bottom: 1rem;
     min-height: 36px;
     flex-wrap: wrap;
@@ -1139,13 +1139,14 @@ input[readonly] {
     align-items: center;
     gap: 0.4rem;
     flex: 1 1 220px;
-    min-width: 180px;
+    min-width: 0;
     max-width: 360px;
 }
 
 .site-records-search-input {
     flex: 1;
     min-width: 0;
+    width: 100%;
     height: 34px;
     padding: 0 0.75rem;
     border: 1.5px solid #dfe8f5;
@@ -1155,12 +1156,37 @@ input[readonly] {
     font-weight: 600;
     color: var(--text);
     background: #fff;
+    box-sizing: border-box;
 }
 
 .site-records-search-input:focus {
     outline: none;
     border-color: var(--primary);
     box-shadow: 0 0 0 3px rgba(26, 60, 110, 0.08);
+}
+
+.site-records-count {
+    background: #eef4ff;
+    color: #1a3c6e;
+    font-size: 0.75rem;
+    font-weight: 800;
+    padding: 0.28rem 0.85rem;
+    border-radius: 20px;
+    border: 1.5px solid #c7d9f8;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    align-self: center;
+    flex-shrink: 0;
+}
+
+.records-table-scroll {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    border: 1px solid var(--border);
+    border-radius: 10px;
 }
 
 /* ── Auto-download scheduler ── */
@@ -1750,22 +1776,37 @@ input[readonly] {
 
 /* ── RECORDS MODAL (wide table modal) ── */
 .records-modal-content {
+    position: relative;
     text-align: left !important;
     padding: 1.5rem !important;
+    width: min(95vw, 1200px) !important;
+    max-width: 1200px !important;
+    max-height: 85vh !important;
+    overflow-x: hidden;
+    overflow-y: auto;
+    box-sizing: border-box;
 }
 
 .records-modal-content .modal-header {
     margin-bottom: 1rem;
+    padding-right: 2.75rem;
 }
 
 .records-modal-content h3 {
     text-align: left;
     font-size: 1rem;
+    line-height: 1.35;
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .records-modal-content .modal-body {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+    overflow: visible;
+    min-width: 0;
+}
+
+.records-modal-content .data-table {
+    min-width: 1200px;
 }
 
 /* ── DUPLICATE MODAL detail box ── */
@@ -1831,6 +1872,58 @@ input[readonly] {
 
     .batch-card {
         min-width: 0;
+    }
+
+    /* View My Records — tablet: stack toolbar, avoid overlap */
+    .records-modal-content {
+        width: min(96vw, 1200px) !important;
+        max-height: 90vh !important;
+        padding: 1.15rem !important;
+    }
+
+    .records-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.65rem;
+    }
+
+    .schedule-panel {
+        flex: none;
+        width: 100%;
+    }
+
+    .site-records-search-wrap {
+        flex: none;
+        width: 100%;
+        max-width: none;
+    }
+
+    .site-records-count {
+        align-self: flex-start;
+    }
+
+    .export-dropdown-wrap {
+        width: 100%;
+    }
+
+    .export-dropdown-btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .export-dropdown-menu {
+        left: 0;
+        right: 0;
+        min-width: 0;
+    }
+
+    .records-pagination {
+        gap: 0.5rem;
+    }
+
+    .records-pagination-controls {
+        flex-wrap: wrap;
+        justify-content: flex-start;
     }
 }
 
@@ -1909,17 +2002,83 @@ input[readonly] {
     .modal-content {
         padding: 1.5rem;
     }
+
+    .modal-overlay {
+        padding: 0.5rem;
+        align-items: flex-start;
+    }
+
+    .records-modal-content {
+        width: 100% !important;
+        max-width: 100% !important;
+        max-height: 96vh !important;
+        border-radius: 14px !important;
+        padding: 1rem !important;
+        margin-top: 0.35rem;
+    }
+
+    .records-modal-content .modal-header {
+        padding-right: 2.5rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .records-modal-content h3 {
+        font-size: 0.88rem;
+        letter-spacing: 0.02em;
+        text-transform: none;
+    }
+
+    .modal-close-btn {
+        top: 0.75rem;
+        right: 0.75rem;
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        font-size: 1.25rem;
+    }
+
+    .data-table th,
+    .data-table td {
+        padding: 0.55rem 0.7rem;
+        font-size: 0.72rem;
+    }
+
+    .data-table th {
+        font-size: 0.65rem;
+    }
+
+    .btn-regen-card {
+        padding: 0.3rem 0.55rem;
+        font-size: 0.68rem;
+    }
+
+    .records-pagination {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .records-pagination-controls {
+        justify-content: center;
+    }
+
+    .pg-btn {
+        min-width: 32px;
+        height: 32px;
+    }
 }
 
 /* ── Mobile: ≤480px ── */
 @media (max-width: 600px) {
     .records-toolbar {
         flex-direction: column;
-        align-items: flex-start;
+        align-items: stretch;
     }
     .schedule-inline--open {
         max-width: 100%;
         flex-wrap: wrap;
+    }
+    .site-records-search-wrap .btn {
+        flex-shrink: 0;
     }
 }
 
