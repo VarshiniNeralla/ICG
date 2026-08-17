@@ -773,15 +773,21 @@ const setupMasterDataRoute = (type, defaultData) => {
         try {
             const site = await resolveSiteForRead(req);
             if (site) {
-                // Try site-specific first, fall back to global
+                // Try site-specific first; empty docs fall back to global defaults
                 const siteDoc = await MasterData.findOne({ type, site });
-                if (siteDoc) return res.json(siteDoc.data);
+                if (siteDoc && Array.isArray(siteDoc.data) && siteDoc.data.length > 0) {
+                    return res.json(siteDoc.data);
+                }
                 const globalDoc = await MasterData.findOne({ type, site: null });
-                return res.json(globalDoc ? globalDoc.data : defaultData);
+                return res.json(globalDoc && Array.isArray(globalDoc.data) && globalDoc.data.length > 0
+                    ? globalDoc.data
+                    : defaultData);
             } else {
                 // Super admin or no site — return global
                 const doc = await MasterData.findOne({ type, site: null });
-                return res.json(doc ? doc.data : defaultData);
+                return res.json(doc && Array.isArray(doc.data) && doc.data.length > 0
+                    ? doc.data
+                    : defaultData);
             }
         } catch (err) {
             console.error(err.message); res.status(500).json({ error: 'Internal server error' });

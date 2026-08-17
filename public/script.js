@@ -36,47 +36,93 @@
     async function fetchList(endpoint) {
         try {
             const res = await fetch(`${API_BASE}${endpoint}`);
-            if (!res.ok) return [];
-            return await res.json();
+            if (!res.ok) {
+                console.warn('Master list fetch failed', endpoint, res.status);
+                return null; // null = request failed — do NOT wipe existing dropdown options
+            }
+            const data = await res.json();
+            return Array.isArray(data) ? data : null;
         } catch (e) {
             console.error('Failed to fetch', endpoint, e);
-            return [];
+            return null;
         }
     }
 
+    // Last successful master lists — used when a poll/visibility refresh fails (rate limit, blip)
+    let _masterListsCache = { sites: null, contractors: null, roles: null };
+    let _populateDropdownsGen = 0;
+    let _populateDropdownsInFlight = false;
+    let _populateDropdownsQueued = false;
+
+    function clearMasterListsCache() {
+        _masterListsCache = { sites: null, contractors: null, roles: null };
+    }
+
     async function populateDropdowns() {
-        const siteParam = operator.site ? `?site=${encodeURIComponent(operator.site)}` : '';
-        const [sites, contractors, roles] = await Promise.all([
-            fetchList(`/api/sites${siteParam}`),
-            fetchList(`/api/contractors${siteParam}`),
-            fetchList(`/api/roles${siteParam}`)
-        ]);
-
-        const sSel = document.getElementById('siteSelect');
-        const cSel = document.getElementById('contractor');
-        const dSel = document.getElementById('designation');
-
-        const curSite = sSel ? sSel.value : '';
-        const curContractor = cSel ? cSel.value : '';
-        const curRole = dSel ? dSel.value : '';
-
-        if (sSel) {
-            sSel.innerHTML = '<option value="">Select Site</option>' + sites.map(s => `<option value="${s}">${s}</option>`).join('');
-            if (sites.includes(curSite)) sSel.value = curSite;
+        // Coalesce overlapping refreshes (login + 30s interval + tab focus)
+        if (_populateDropdownsInFlight) {
+            _populateDropdownsQueued = true;
+            return;
         }
-        if (cSel) {
-            const contractorList = [...contractors];
-            if (!contractorList.includes('Others')) contractorList.push('Others');
-            cSel.innerHTML = '<option value="">Select Contractor</option>' + contractorList.map(c => `<option value="${c}">${c}</option>`).join('');
-            if (contractorList.includes(curContractor)) cSel.value = curContractor;
+        _populateDropdownsInFlight = true;
+        const gen = ++_populateDropdownsGen;
+
+        try {
+            const siteParam = operator.site ? `?site=${encodeURIComponent(operator.site)}` : '';
+            const [sitesRes, contractorsRes, rolesRes] = await Promise.all([
+                fetchList(`/api/sites${siteParam}`),
+                fetchList(`/api/contractors${siteParam}`),
+                fetchList(`/api/roles${siteParam}`)
+            ]);
+
+            // A newer populate was requested after this one started — drop stale apply
+            if (gen !== _populateDropdownsGen) return;
+
+            // Only update cache on successful fetches; keep previous list on failure
+            if (sitesRes) _masterListsCache.sites = sitesRes;
+            if (contractorsRes) _masterListsCache.contractors = contractorsRes;
+            if (rolesRes) _masterListsCache.roles = rolesRes;
+
+            const sites = _masterListsCache.sites || [];
+            const contractors = _masterListsCache.contractors || [];
+            const roles = _masterListsCache.roles || [];
+
+            // Never paint an "Others"-only dropdown from a total fetch failure
+            const anyLoaded = _masterListsCache.sites || _masterListsCache.contractors || _masterListsCache.roles;
+            if (!anyLoaded) return;
+
+            const sSel = document.getElementById('siteSelect');
+            const cSel = document.getElementById('contractor');
+            const dSel = document.getElementById('designation');
+
+            const curSite = sSel ? sSel.value : '';
+            const curContractor = cSel ? cSel.value : '';
+            const curRole = dSel ? dSel.value : '';
+
+            if (sSel && _masterListsCache.sites) {
+                sSel.innerHTML = '<option value="">Select Site</option>' + sites.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+                if (sites.includes(curSite)) sSel.value = curSite;
+            }
+            if (cSel && _masterListsCache.contractors) {
+                const contractorList = [...contractors];
+                if (!contractorList.includes('Others')) contractorList.push('Others');
+                cSel.innerHTML = '<option value="">Select Contractor</option>' + contractorList.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+                if (contractorList.includes(curContractor)) cSel.value = curContractor;
+            }
+            if (dSel && _masterListsCache.roles) {
+                const roleList = [...roles];
+                if (!roleList.includes('Others')) roleList.push('Others');
+                dSel.innerHTML = '<option value="">Select</option>' + roleList.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+                if (roleList.includes(curRole)) dSel.value = curRole;
+            }
+            updateOthersFieldsVisibility();
+        } finally {
+            if (gen === _populateDropdownsGen) _populateDropdownsInFlight = false;
+            if (_populateDropdownsQueued) {
+                _populateDropdownsQueued = false;
+                populateDropdowns();
+            }
         }
-        if (dSel) {
-            const roleList = [...roles];
-            if (!roleList.includes('Others')) roleList.push('Others');
-            dSel.innerHTML = '<option value="">Select</option>' + roleList.map(r => `<option value="${r}">${r}</option>`).join('');
-            if (roleList.includes(curRole)) dSel.value = curRole;
-        }
-        updateOthersFieldsVisibility();
     }
 
     function populateStates() {
@@ -347,12 +393,14 @@
             loginScreen.style.display = 'none';
             mainApp.style.display = 'block';
             setDefaultDates();
+            clearMasterListsCache();
             populateDropdowns();
             restoreBatchQueue();
         } else {
             batchQueue = [];
+            // Still try once for any shared lists when logged out (no-op if selects hidden)
+            populateDropdowns();
         }
-        populateDropdowns();
     }
 
     loginForm.onsubmit = async (e) => {
@@ -384,6 +432,7 @@
             loginScreen.style.display = 'none';
             mainApp.style.display = 'block';
             setDefaultDates();
+            clearMasterListsCache();
             populateDropdowns();
             restoreBatchQueue();
         } catch (err) {
