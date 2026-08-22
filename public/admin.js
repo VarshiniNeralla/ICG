@@ -298,14 +298,22 @@ function renderSiteCountGrid(bySite) {
     const siteCountGrid = document.getElementById('siteCountGrid');
     if (!siteCountGrid) return;
     const entries = Object.entries(bySite).sort((a, b) => b[1] - a[1]);
+    const siteCountTotal = document.getElementById('siteCountTotal');
+    const siteCountSublabel = document.getElementById('siteCountSublabel');
+    if (siteCountTotal) siteCountTotal.textContent = String(entries.length);
+    if (siteCountSublabel) {
+        siteCountSublabel.textContent = entries.length
+            ? `${entries.length} site${entries.length === 1 ? '' : 's'} with records`
+            : 'No site activity yet';
+    }
     if (entries.length) {
         siteCountGrid.innerHTML = entries.map(([site, count]) => `
-            <div class="site-count-pill">
+            <div class="site-count-pill" title="${esc(site)}">
                 <span class="site-count-name">${esc(site)}</span>
                 <span class="site-count-num" id="siteCount-${esc(site)}">${count}</span>
             </div>`).join('');
     } else {
-        siteCountGrid.innerHTML = '<p style="color:var(--text-light);font-size:0.8rem;margin:0;">No data</p>';
+        siteCountGrid.innerHTML = '<p class="site-count-empty">No data</p>';
     }
 }
 
