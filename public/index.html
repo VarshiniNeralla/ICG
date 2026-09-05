@@ -9,12 +9,18 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
         rel="stylesheet" />
-    <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="style.css?v=records-responsive" />
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#1a3c6e" />
+    <link rel="icon" href="new_logo.png" />
+    <link rel="apple-touch-icon" href="new_logo.png" />
+    <link rel="stylesheet" href="style.css?v=offline-1" />
 </head>
 
 <body>
     <noscript><p style="padding:2rem;text-align:center;font-size:1.2rem;">JavaScript is required to use this application. Please enable JavaScript in your browser.</p></noscript>
+    <div id="offlineBanner" class="offline-banner" hidden role="status">
+        <span id="offlineBannerText"></span>
+    </div>
 
     <!-- LOGIN SCREEN -->
     <div id="loginScreen" class="overlay">
@@ -520,6 +526,7 @@
                                 <th>Issue Date</th>
                                 <th>Reissue Count</th>
                                 <th>Aadhar Verified</th>
+                                <th>Status</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
@@ -590,7 +597,8 @@
 
     <script src="xlsx.min.js"></script>
     <script src="states-districts.js?v=delhi-districts"></script>
-    <script src="script.js?v=delhi-districts"></script>
+    <script src="offline.js?v=offline-1"></script>
+    <script src="script.js?v=offline-1"></script>
 </body>
 
 </html>

@@ -33,9 +33,53 @@
         return [code.substring(0, mid), code.substring(mid)];
     }
 
+    function offlineReady() {
+        return typeof ParichayOffline !== 'undefined';
+    }
+
+    function bindOfflineHooks() {
+        if (!offlineReady()) return;
+        ParichayOffline.configure({
+            getApiBase: () => API_BASE,
+            getAuthHeaders: () => authHeaders({ 'Content-Type': 'application/json' }),
+            getSite: () => operator.site || '',
+            on401: () => forceOperatorReLogin('Session expired or the server was restarted. Please sign in again to save.'),
+            onFlushDone: () => {
+                const modal = document.getElementById('recordsModal');
+                if (modal && modal.style.display === 'flex') {
+                    applyMergedRecordsToView().then(() => renderSiteRecordsPage()).catch(() => {});
+                }
+            }
+        });
+    }
+
+    async function startOfflineForOperator() {
+        if (!offlineReady()) return;
+        bindOfflineHooks();
+        await ParichayOffline.init();
+        if (operator.site) await ParichayOffline.migrateLegacy(operator.site);
+        ParichayOffline.startListeners();
+        ParichayOffline.updateBanner();
+    }
+
+    async function applyMergedRecordsToView() {
+        if (!offlineReady() || !operator.site) return;
+        const cached = await ParichayOffline.getCachedRecords(operator.site);
+        const outbox = await ParichayOffline.listOutbox(operator.site);
+        _siteRecordsCache = ParichayOffline.mergeRecords(cached, outbox);
+    }
+
+    function registerOperatorServiceWorker() {
+        if (!('serviceWorker' in navigator)) return;
+        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((err) => {
+            console.warn('Service worker registration failed:', err);
+        });
+    }
+
     async function fetchList(endpoint) {
         try {
-            const res = await fetch(`${API_BASE}${endpoint}`);
+            const doFetch = offlineReady() ? ParichayOffline.apiFetch : fetch;
+            const res = await doFetch(`${API_BASE}${endpoint}`, {}, { retries: 1 });
             if (!res.ok) {
                 console.warn('Master list fetch failed', endpoint, res.status);
                 return null; // null = request failed — do NOT wipe existing dropdown options
@@ -83,13 +127,33 @@
             if (contractorsRes) _masterListsCache.contractors = contractorsRes;
             if (rolesRes) _masterListsCache.roles = rolesRes;
 
+            let anyLoaded = _masterListsCache.sites || _masterListsCache.contractors || _masterListsCache.roles;
+            if (!anyLoaded && offlineReady()) {
+                const persisted = await ParichayOffline.getMasterLists(operator.site || '');
+                if (persisted) {
+                    _masterListsCache = {
+                        sites: persisted.sites || null,
+                        contractors: persisted.contractors || null,
+                        roles: persisted.roles || null
+                    };
+                    anyLoaded = _masterListsCache.sites || _masterListsCache.contractors || _masterListsCache.roles;
+                }
+            }
+
             const sites = _masterListsCache.sites || [];
             const contractors = _masterListsCache.contractors || [];
             const roles = _masterListsCache.roles || [];
 
             // Never paint an "Others"-only dropdown from a total fetch failure
-            const anyLoaded = _masterListsCache.sites || _masterListsCache.contractors || _masterListsCache.roles;
             if (!anyLoaded) return;
+
+            if (offlineReady() && (sitesRes || contractorsRes || rolesRes)) {
+                ParichayOffline.setMasterLists(operator.site || '', {
+                    sites: _masterListsCache.sites,
+                    contractors: _masterListsCache.contractors,
+                    roles: _masterListsCache.roles
+                }).catch(() => {});
+            }
 
             const sSel = document.getElementById('siteSelect');
             const cSel = document.getElementById('contractor');
@@ -358,10 +422,11 @@
                 if (parsed?.token) {
                     let sessionOk = false;
                     try {
-                        const vr = await fetch(`${API_BASE}/api/auth/verify`, {
+                        const doFetch = offlineReady() ? ParichayOffline.apiFetch : fetch;
+                        const vr = await doFetch(`${API_BASE}/api/auth/verify`, {
                             method: 'POST',
                             headers: { Authorization: `Bearer ${parsed.token}` }
-                        });
+                        }, { retries: 1 });
                         if (vr.ok) {
                             const body = await vr.json();
                             sessionOk = body.valid === true;
@@ -393,6 +458,7 @@
             loginScreen.style.display = 'none';
             mainApp.style.display = 'block';
             setDefaultDates();
+            await startOfflineForOperator();
             clearMasterListsCache();
             populateDropdowns();
             restoreBatchQueue();
@@ -415,11 +481,12 @@
         }
 
         try {
-            const resp = await fetch(`${API_BASE}/api/auth/operator`, {
+            const doFetch = offlineReady() ? ParichayOffline.apiFetch : fetch;
+            const resp = await doFetch(`${API_BASE}/api/auth/operator`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })
-            });
+            }, { retries: 1 });
             const result = await resp.json();
             if (!resp.ok) {
                 showAlert(result.error || 'Invalid credentials.');
@@ -432,6 +499,7 @@
             loginScreen.style.display = 'none';
             mainApp.style.display = 'block';
             setDefaultDates();
+            await startOfflineForOperator();
             clearMasterListsCache();
             populateDropdowns();
             restoreBatchQueue();
@@ -1580,8 +1648,18 @@
     }
 
     async function fetchRecordPhotoDataURL(record) {
-        if (!record || !record.photoPath) return null;
-        if (record.photoPath.startsWith('data:')) return record.photoPath;
+        if (!record) return null;
+        if (record.photoPath && record.photoPath.startsWith('data:')) return record.photoPath;
+
+        const pKey = offlineReady() && operator.site && record.aadhar
+            ? ParichayOffline.photoKey(operator.site, record.aadhar)
+            : null;
+        if (pKey) {
+            const cached = await ParichayOffline.getPhotoDataURL(pKey);
+            if (cached) return cached;
+        }
+
+        if (!record.photoPath) return null;
 
         const photoSrc = record.photoPath.startsWith('http')
             ? record.photoPath
@@ -1590,12 +1668,15 @@
         // Cloudinary URLs must go through imgproxy (CORS); local/same-origin can load directly
         if (photoSrc.startsWith('https://res.cloudinary.com/')) {
             try {
-                const r = await fetch(`${API_BASE}/api/imgproxy?url=${encodeURIComponent(photoSrc)}`, {
+                const doFetch = offlineReady() ? ParichayOffline.apiFetch : fetch;
+                const r = await doFetch(`${API_BASE}/api/imgproxy?url=${encodeURIComponent(photoSrc)}`, {
                     headers: authHeaders()
-                });
+                }, { retries: 1 });
                 if (!r.ok) return null;
                 const j = await r.json();
-                return j.b64 ? `data:${j.ct};base64,${j.b64}` : null;
+                const dataUrl = j.b64 ? `data:${j.ct};base64,${j.b64}` : null;
+                if (dataUrl && pKey) ParichayOffline.putPhoto(pKey, dataUrl).catch(() => {});
+                return dataUrl;
             } catch {
                 return null;
             }
@@ -1607,10 +1688,28 @@
             c.width = img.naturalWidth || img.width;
             c.height = img.naturalHeight || img.height;
             c.getContext('2d').drawImage(img, 0, 0);
-            return c.toDataURL('image/jpeg', 0.95);
+            const dataUrl = c.toDataURL('image/jpeg', 0.95);
+            if (pKey) ParichayOffline.putPhoto(pKey, dataUrl).catch(() => {});
+            return dataUrl;
         } catch {
             return null;
         }
+    }
+
+    async function prefetchRecordPhotos(records) {
+        if (!offlineReady() || !ParichayOffline.isOnline() || !operator.site) return;
+        const queue = (records || []).filter((r) => r && r.photoPath && r.aadhar && !r._local);
+        let i = 0;
+        const worker = async () => {
+            while (i < queue.length) {
+                const r = queue[i++];
+                const key = ParichayOffline.photoKey(operator.site, r.aadhar);
+                const have = await ParichayOffline.getPhotoDataURL(key);
+                if (have) continue;
+                try { await fetchRecordPhotoDataURL(r); } catch { /* skip */ }
+            }
+        };
+        await Promise.all([worker(), worker(), worker()]);
     }
 
     async function regenerateRecordToBatch(recordIndex, btnEl) {
@@ -1640,31 +1739,70 @@
             let newIssueDate = todayStr;
             let newReissueCount = (record.reissueCount || 0) + 1;
             const recordId = record._id || record.id;
+            let reissueQueued = false;
+            let authLost = false;
 
             if (recordId && !record._local) {
                 try {
-                    const resp = await fetch(`${API_BASE}/api/employees/${recordId}/reissue`, {
+                    const doFetch = offlineReady() ? ParichayOffline.apiFetch : fetch;
+                    const resp = await doFetch(`${API_BASE}/api/employees/${recordId}/reissue`, {
                         method: 'POST',
                         headers: authHeaders({ 'Content-Type': 'application/json' })
-                    });
+                    }, { retries: 1 });
                     const result = await resp.json().catch(() => ({}));
-                    if (!resp.ok) {
-                        showAlert(result.error || 'Failed to update reissue record on server.');
-                        return;
+                    if (resp.status === 401) {
+                        authLost = true;
+                        if (offlineReady()) {
+                            await ParichayOffline.enqueueReissue(record, {
+                                doi: todayStr, issueDate: todayStr, reissueCount: newReissueCount
+                            });
+                            reissueQueued = true;
+                        }
+                    } else if (!resp.ok) {
+                        if (offlineReady() && (resp.status >= 500 || resp.status === 0)) {
+                            await ParichayOffline.enqueueReissue(record, {
+                                doi: todayStr, issueDate: todayStr, reissueCount: newReissueCount
+                            });
+                            reissueQueued = true;
+                        } else {
+                            showAlert(result.error || 'Failed to update reissue record on server.');
+                            return;
+                        }
+                    } else {
+                        newIssueDate = result.doi || result.issueDate || todayStr;
+                        newReissueCount = result.reissueCount != null ? result.reissueCount : newReissueCount;
                     }
-                    newIssueDate = result.doi || result.issueDate || todayStr;
-                    newReissueCount = result.reissueCount != null ? result.reissueCount : newReissueCount;
                 } catch (err) {
                     console.error('Reissue API failed:', err);
-                    showAlert('Failed to update reissue record. Please check your connection and try again.');
-                    return;
+                    if (offlineReady()) {
+                        await ParichayOffline.enqueueReissue(record, {
+                            doi: todayStr, issueDate: todayStr, reissueCount: newReissueCount
+                        });
+                        reissueQueued = true;
+                    } else {
+                        showAlert('Failed to update reissue record. Please check your connection and try again.');
+                        return;
+                    }
                 }
+            } else if (record._local && offlineReady() && operator.site) {
+                newIssueDate = todayStr;
+                record.doi = newIssueDate;
+                record.issueDate = newIssueDate;
+                record.reissueCount = newReissueCount;
+                await ParichayOffline.patchPendingSave(operator.site, record.aadhar, {
+                    doi: newIssueDate,
+                    issueDate: newIssueDate,
+                    reissueCount: newReissueCount
+                });
             }
 
             // Keep local cache in sync so table/export reflect the new D.O.I & count
             record.doi = newIssueDate;
             record.issueDate = newIssueDate;
             record.reissueCount = newReissueCount;
+            if (offlineReady() && operator.site && !reissueQueued) {
+                ParichayOffline.upsertCachedRecord(operator.site, record).catch(() => {});
+            }
 
             // Rebuild card — D.O.I on the card must be today's reissue date
             const cardData = {
@@ -1694,8 +1832,16 @@
                 mainMain.classList.remove('layout-initial', 'layout-preview');
                 mainMain.classList.add('layout-batch');
             }
-            showToast(`Card for ${record.fullName || 'employee'} reissued and added to batch.`, 'success');
+            showToast(
+                reissueQueued
+                    ? `Card for ${record.fullName || 'employee'} reissued locally — will sync when connected.`
+                    : `Card for ${record.fullName || 'employee'} reissued and added to batch.`,
+                reissueQueued ? 'warning' : 'success'
+            );
             if (batchQueue.length >= 9) showBatchFullAlert();
+            if (authLost) {
+                forceOperatorReLogin('Session expired or the server was restarted. Please sign in again to sync.');
+            }
         } catch (err) {
             console.error('Regenerate failed:', err);
             showAlert('Failed to regenerate card. Please try again.');
@@ -1718,23 +1864,6 @@
         }, 5000);
     }
 
-    function _saveLocalRecord(data) {
-        const key = `ep_local_records_${operator.site}`;
-        let existing = [];
-        try { existing = JSON.parse(localStorage.getItem(key) || '[]'); } catch { existing = []; }
-        existing.push({ ...data, _savedAt: new Date().toISOString(), _local: true });
-        try { localStorage.setItem(key, JSON.stringify(existing)); } catch (e) { console.warn('localStorage full, cannot save local record:', e); }
-    }
-
-    function _getLocalRecords() {
-        const key = `ep_local_records_${operator.site}`;
-        try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; }
-    }
-
-    function _clearLocalRecords() {
-        localStorage.removeItem(`ep_local_records_${operator.site}`);
-    }
-
     async function saveToBackend() {
         if (isSaving || isSaved) return;
         isSaving = true;
@@ -1744,35 +1873,56 @@
         data.site = operator.site || '';
         data.operator = operator.name || '';
 
-        _saveLocalRecord(data);
-
         console.log('--- Submission Request Start ---');
         console.log('Sending data to backend for:', data.fullName);
 
         try {
-            const resp = await fetch(`${API_BASE}/api/save-employee`, {
-                method: 'POST',
-                headers: authHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify(data)
-            });
-            if (resp.status === 401) {
-                forceOperatorReLogin('Session expired or the server was restarted. Please sign in again to save.');
-                return;
-            }
-            if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
-            const result = await resp.json();
-
-            isSaved = true;
-
-            if (result.warnings && result.warnings.length > 0) {
-                console.warn('Backend warnings:', result.warnings);
-                showToast('⚠ Warning: ' + result.warnings[0], 'warning');
+            if (offlineReady()) {
+                await ParichayOffline.enqueueSave(data);
+                isSaved = true;
+                const summary = await ParichayOffline.flushOutbox();
+                if (summary && summary.auth) return;
+                if (summary && summary.synced > 0 && !summary.pending && !summary.conflicts) {
+                    showToast('Record saved successfully!', 'success');
+                } else if (summary && summary.conflicts > 0) {
+                    showToast('⚠ Duplicate on server — card kept locally. Check My Records.', 'warning');
+                } else {
+                    showToast(
+                        ParichayOffline.isOnline()
+                            ? '⚠ Record queued and will retry shortly.'
+                            : '⚠ Offline — record queued and will sync when connected.',
+                        'warning'
+                    );
+                }
+                ParichayOffline.updateBanner();
             } else {
-                showToast('Record saved successfully!', 'success');
+                const doFetch = fetch;
+                const resp = await doFetch(`${API_BASE}/api/save-employee`, {
+                    method: 'POST',
+                    headers: authHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify(data)
+                });
+                if (resp.status === 401) {
+                    forceOperatorReLogin('Session expired or the server was restarted. Please sign in again to save.');
+                    return;
+                }
+                if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+                const result = await resp.json();
+                isSaved = true;
+                if (result.warnings && result.warnings.length > 0) {
+                    showToast('⚠ Warning: ' + result.warnings[0], 'warning');
+                } else {
+                    showToast('Record saved successfully!', 'success');
+                }
             }
         } catch (err) {
             console.error('Backend save failed:', err.message);
-            showToast('⚠ Record not saved to cloud, but card generated locally.', 'warning');
+            if (offlineReady()) {
+                isSaved = true;
+                showToast('⚠ Record queued locally and will sync when connected.', 'warning');
+            } else {
+                showToast('⚠ Record not saved to cloud, but card generated locally.', 'warning');
+            }
         } finally {
             isSaving = false;
             console.log('--- Submission Request End ---');
@@ -1975,11 +2125,17 @@
         const all = [];
         let page = 1;
         let pages = 1;
+        const doFetch = offlineReady() ? ParichayOffline.apiFetch : fetch;
         do {
-            const resp = await fetch(
+            const resp = await doFetch(
                 `${API_BASE}/api/employees?site=${encodeURIComponent(site)}&page=${page}&limit=${PAGE_SIZE}`,
-                { headers: authHeaders() }
+                { headers: authHeaders() },
+                { retries: 1 }
             );
+            if (resp.status === 401) {
+                forceOperatorReLogin('Session expired or the server was restarted. Please sign in again.');
+                throw new Error('Unauthorized');
+            }
             if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
             const result = await resp.json();
             const chunk = result.data || result;
@@ -2034,14 +2190,23 @@
         _siteRecordsQuery = '';
         document.getElementById('recordsModal').style.display = 'flex';
         const tbody = document.getElementById('siteRecordsBody');
-        tbody.innerHTML = '<tr><td colspan="21" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="23" style="text-align:center; padding:2rem;">Loading records...</td></tr>';
 
         try {
             const records = await fetchAllSiteRecords(site);
 
-            if (records.length === 0) {
-                _siteRecordsCache = [];
-                tbody.innerHTML = '<tr><td colspan="21" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
+            if (offlineReady()) {
+                await ParichayOffline.setCachedRecords(site, records);
+                const serverAadhars = new Set(records.map(r => r.aadhar));
+                await ParichayOffline.pruneSyncedSaves(site, serverAadhars);
+                await applyMergedRecordsToView();
+            } else {
+                _siteRecordsCache = records;
+            }
+            _siteRecordsPage = 1;
+
+            if (_siteRecordsCache.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="23" style="text-align:center; padding:2rem; color:var(--text-light);">No records found for this site.</td></tr>';
                 if (countBadge) {
                     countBadge.textContent = '0 employees';
                     countBadge.style.display = '';
@@ -2049,22 +2214,20 @@
                 return;
             }
 
-            _siteRecordsCache = records;
-            _siteRecordsPage = 1;
-
-            // Prune local records whose aadhar now exists on the server (successfully synced)
-            const serverAadhars = new Set(records.map(r => r.aadhar));
-            const key = `ep_local_records_${operator.site}`;
-            try {
-                const local = JSON.parse(localStorage.getItem(key) || '[]');
-                const remaining = local.filter(r => !serverAadhars.has(r.aadhar));
-                if (remaining.length !== local.length) localStorage.setItem(key, JSON.stringify(remaining));
-            } catch { /* ignore */ }
-
             renderSiteRecordsPage();
+            prefetchRecordPhotos(_siteRecordsCache).catch(() => {});
         } catch (err) {
             console.error('Failed to load site records:', err);
-            tbody.innerHTML = '<tr><td colspan="21" style="text-align:center; padding:2rem; color:red;">Error loading records.</td></tr>';
+            if (offlineReady()) {
+                await applyMergedRecordsToView();
+                if (_siteRecordsCache.length > 0) {
+                    showToast('Showing last saved records (offline / network error).', 'warning');
+                    _siteRecordsPage = 1;
+                    renderSiteRecordsPage();
+                    return;
+                }
+            }
+            tbody.innerHTML = '<tr><td colspan="23" style="text-align:center; padding:2rem; color:red;">Error loading records.</td></tr>';
         }
     }
 
@@ -2076,7 +2239,7 @@
         document.getElementById('siteRecordsTable')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    function renderSiteRecordsPage() {
+    async function renderSiteRecordsPage() {
         const tbody = document.getElementById('siteRecordsBody');
         if (!tbody) return;
 
@@ -2099,7 +2262,7 @@
         }
 
         if (total === 0) {
-            tbody.innerHTML = `<tr><td colspan="22" style="text-align:center; padding:2rem; color:var(--text-light);">${
+            tbody.innerHTML = `<tr><td colspan="23" style="text-align:center; padding:2rem; color:var(--text-light);">${
                 (_siteRecordsQuery || '').trim() ? 'No records match your search.' : 'No records found for this site.'
             }</td></tr>`;
             renderSiteRecordsPagination(1, 0);
@@ -2109,9 +2272,18 @@
         const start = (_siteRecordsPage - 1) * SITE_RECORDS_PER_PAGE;
         const pageRecords = filtered.slice(start, start + SITE_RECORDS_PER_PAGE);
 
+        const photoSrcs = await Promise.all(pageRecords.map(({ r }) => resolveRecordPhotoSrc(r)));
+
         tbody.innerHTML = '';
-        pageRecords.forEach(({ r, cacheIdx }) => {
-            const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API_BASE}/${r.photoPath.replace(/\\/g, '/')}`) : '';
+        pageRecords.forEach(({ r, cacheIdx }, i) => {
+            const photoSrc = photoSrcs[i] || '';
+            const status = r._syncStatus || 'synced';
+            const statusLabel = status === 'pending-reissue' ? 'Pending reissue'
+                : status === 'conflict' ? 'Conflict'
+                : status === 'error' ? 'Sync error'
+                : status === 'pending' ? 'Pending'
+                : 'Synced';
+            const statusTitle = r._outboxError ? esc(r._outboxError) : '';
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td>${photoSrc ? `<img src="${esc(photoSrc)}" style="width:40px; height:50px; border-radius:4px; object-fit:cover;" />` : 'N/A'}</td>
@@ -2135,6 +2307,7 @@
                 <td>${esc(formatDate(r.issueDate))}</td>
                 <td>${esc(String(r.reissueCount != null ? r.reissueCount : 0))}</td>
                 <td>${esc(r.aadharVerified) || 'No'}</td>
+                <td><span class="sync-badge sync-badge--${esc(status)}" title="${statusTitle}">${statusLabel}</span></td>
                 <td><button type="button" class="btn-regen-card" data-record-idx="${cacheIdx}">Regenerate</button></td>`;
             tbody.appendChild(tr);
         });
@@ -2143,6 +2316,17 @@
         });
 
         renderSiteRecordsPagination(totalPages, total);
+    }
+
+    async function resolveRecordPhotoSrc(r) {
+        if (!r) return '';
+        if (r.photoPath && String(r.photoPath).startsWith('data:')) return r.photoPath;
+        if (offlineReady() && operator.site && r.aadhar) {
+            const cached = await ParichayOffline.getPhotoDataURL(ParichayOffline.photoKey(operator.site, r.aadhar));
+            if (cached) return cached;
+        }
+        if (!r.photoPath) return '';
+        return r.photoPath.startsWith('http') ? r.photoPath : `${API_BASE}/${r.photoPath.replace(/\\/g, '/')}`;
     }
 
     function renderSiteRecordsPagination(totalPages, totalOverride) {
@@ -2188,20 +2372,21 @@
 
     function exportSiteToExcel() { exportSiteXLS(false); }
 
-    function _mergeWithLocalRecords(serverRecords) {
-        const local = _getLocalRecords();
-        if (!local.length) return serverRecords;
-        const serverAadhars = new Set(serverRecords.map(r => r.aadhar));
-        const unsaved = local.filter(r => !serverAadhars.has(r.aadhar));
-        if (unsaved.length > 0) {
-            showToast(`ℹ ${unsaved.length} local record(s) not yet synced to server included in export.`, 'warning');
+    async function recordsForExport() {
+        if (offlineReady() && operator.site) {
+            await applyMergedRecordsToView();
         }
-        return [...serverRecords, ...unsaved];
+        const merged = _siteRecordsCache.slice();
+        const pending = merged.filter(r => r._local || r._syncStatus === 'pending' || r._syncStatus === 'conflict' || r._syncStatus === 'error');
+        if (pending.length > 0) {
+            showToast(`ℹ ${pending.length} local record(s) not yet synced to server included in export.`, 'warning');
+        }
+        return merged;
     }
 
-    function exportSiteXLS(withImages) {
-        const headers = ['Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Thekedar','Thekedar Contact','Designation','Contact','Induction','Validity','Issue Date','Reissue Count','Aadhar Verified'];
-        const allRecords = _mergeWithLocalRecords(_siteRecordsCache);
+    async function exportSiteXLS(withImages) {
+        const headers = ['Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Thekedar','Thekedar Contact','Designation','Contact','Induction','Validity','Issue Date','Reissue Count','Aadhar Verified','Status'];
+        const allRecords = await recordsForExport();
         const rows = allRecords.map(r => {
             const row = {};
             row['Name']        = r.fullName   || '---';
@@ -2224,6 +2409,10 @@
             row['Issue Date']  = formatDate(r.issueDate);
             row['Reissue Count'] = r.reissueCount != null ? r.reissueCount : 0;
             row['Aadhar Verified'] = r.aadharVerified || 'No';
+            row['Status'] = r._syncStatus === 'pending' || r._syncStatus === 'pending-reissue' ? 'Pending'
+                : r._syncStatus === 'conflict' ? 'Conflict'
+                : r._syncStatus === 'error' ? 'Sync error'
+                : 'Synced';
             return row;
         });
         const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
@@ -2253,43 +2442,56 @@
         async function fetchB64(url) {
             if (!url) return null;
             try {
-                const r = await fetch(`${API_BASE}/api/imgproxy?url=${encodeURIComponent(url)}`, {
+                const doFetch = offlineReady() ? ParichayOffline.apiFetch : fetch;
+                const r = await doFetch(`${API_BASE}/api/imgproxy?url=${encodeURIComponent(url)}`, {
                     headers: authHeaders()
-                });
+                }, { retries: 1 });
                 if (!r.ok) return null;
                 const j = await r.json();
                 return j.b64 ? `data:${j.ct};base64,${j.b64}` : null;
             } catch { return null; }
         }
 
-        const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Thekedar','Thekedar Contact','Designation','Contact','Induction','Validity','Issue Date','Reissue Count','Aadhar Verified'];
-        const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
-        const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
+        try {
+            const cols = ['Photo','Name','Aadhar','Age','Gender','DOB','Blood Group','State','District','Address','Contractor','Camp','Thekedar','Thekedar Contact','Designation','Contact','Induction','Validity','Issue Date','Reissue Count','Aadhar Verified','Status'];
+            const thS = 'background:#1a3c6e;color:#fff;font-weight:700;padding:8px 10px;font-size:11px;text-align:left;border:1px solid #0d2240;white-space:nowrap;';
+            const header = cols.map(c => `<th style="${thS}">${c}</th>`).join('');
 
-        const allRecordsWithPhotos = _mergeWithLocalRecords(_siteRecordsCache);
-        const dataRows = await Promise.all(allRecordsWithPhotos.map(async (r, i) => {
-            const bg = i % 2 === 0 ? '#fff' : '#f8fafc';
-            const td = v => `<td style="padding:5px 9px;border:1px solid #e2e8f0;vertical-align:middle;font-size:10px;background:${bg};">${v||'---'}</td>`;
-            let b64 = null;
-            if (r._local && r.photoPath && r.photoPath.startsWith('data:')) {
-                b64 = r.photoPath;
-            } else {
-                const photoSrc = r.photoPath ? (r.photoPath.startsWith('http') ? r.photoPath : `${API_BASE}/${r.photoPath.replace(/\\/g,'/')}`) : '';
-                b64 = await fetchB64(photoSrc);
-            }
-            const imgCell = `<td style="padding:3px;border:1px solid #e2e8f0;text-align:center;vertical-align:middle;background:${bg};">${b64 ? `<img src="${b64}" width="48" height="48" style="border-radius:4px;display:block;" />` : '—'}</td>`;
-            return `<tr>
-                ${imgCell}
-                ${td(r.fullName)}${td(r.aadhar)}${td(r.age)}${td(r.gender)}
-                ${td(formatDate(r.dob))}${td(r.bloodGroup)}${td(r.state)}${td(r.district)}${td(r.address)}
-                ${td(r.contractor)}${td(r.laborCamp)}${td(r.subContractor)}${td(r.subContractorContact)}${td(r.designation)}${td(r.contact)}
-                ${td(formatDate(r.doi))}${td(formatDate(r.validity))}${td(formatDate(r.issueDate))}
-                ${td(String(r.reissueCount != null ? r.reissueCount : 0))}
-                ${td(r.aadharVerified || 'No')}
-            </tr>`;
-        }));
+            const allRecordsWithPhotos = await recordsForExport();
+            const dataRows = await Promise.all(allRecordsWithPhotos.map(async (r, i) => {
+                const bg = i % 2 === 0 ? '#fff' : '#f8fafc';
+                const td = v => `<td style="padding:5px 9px;border:1px solid #e2e8f0;vertical-align:middle;font-size:10px;background:${bg};">${v||'---'}</td>`;
+                let b64 = await resolveRecordPhotoSrc(r);
+                if (b64 && b64.startsWith('https://res.cloudinary.com/')) {
+                    const proxied = await fetchB64(b64);
+                    if (proxied) {
+                        b64 = proxied;
+                        if (offlineReady() && operator.site && r.aadhar) {
+                            ParichayOffline.putPhoto(ParichayOffline.photoKey(operator.site, r.aadhar), proxied).catch(() => {});
+                        }
+                    }
+                } else if (b64 && !b64.startsWith('data:')) {
+                    const proxied = await fetchB64(b64);
+                    if (proxied) b64 = proxied;
+                }
+                const statusLabel = r._syncStatus === 'pending' || r._syncStatus === 'pending-reissue' ? 'Pending'
+                    : r._syncStatus === 'conflict' ? 'Conflict'
+                    : r._syncStatus === 'error' ? 'Sync error'
+                    : 'Synced';
+                const imgCell = `<td style="padding:3px;border:1px solid #e2e8f0;text-align:center;vertical-align:middle;background:${bg};">${b64 && b64.startsWith('data:') ? `<img src="${b64}" width="48" height="48" style="border-radius:4px;display:block;" />` : '—'}</td>`;
+                return `<tr>
+                    ${imgCell}
+                    ${td(r.fullName)}${td(r.aadhar)}${td(r.age)}${td(r.gender)}
+                    ${td(formatDate(r.dob))}${td(r.bloodGroup)}${td(r.state)}${td(r.district)}${td(r.address)}
+                    ${td(r.contractor)}${td(r.laborCamp)}${td(r.subContractor)}${td(r.subContractorContact)}${td(r.designation)}${td(r.contact)}
+                    ${td(formatDate(r.doi))}${td(formatDate(r.validity))}${td(formatDate(r.issueDate))}
+                    ${td(String(r.reissueCount != null ? r.reissueCount : 0))}
+                    ${td(r.aadharVerified || 'No')}
+                    ${td(statusLabel)}
+                </tr>`;
+            }));
 
-        const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+            const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <title>Site Records With Photos — ${operator.site}</title>
 <style>body{font-family:Calibri,Arial,sans-serif;font-size:10px;margin:16px;}table{border-collapse:collapse;width:100%;}</style>
 </head><body>
@@ -2297,14 +2499,15 @@
 <table><thead><tr>${header}</tr></thead><tbody>${dataRows.join('')}</tbody></table>
 </body></html>`;
 
-        const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = `SiteRecords_${operator.site.replace(/\s+/g,'_')}_${getSiteDateStr()}_WithPhotos.html`;
-        link.click();
-        setTimeout(() => URL.revokeObjectURL(link.href), 2000);
-
-        if (btnWithImg) { btnWithImg.textContent = orig; btnWithImg.disabled = false; }
+            const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `SiteRecords_${operator.site.replace(/\s+/g,'_')}_${getSiteDateStr()}_WithPhotos.html`;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+        } finally {
+            if (btnWithImg) { btnWithImg.textContent = orig; btnWithImg.disabled = false; }
+        }
     }
 
     // ── Auto-download scheduler ──────────────────────────────────────────────
@@ -2432,6 +2635,7 @@
     // ─────────────────────────────────────────────────────────────────────────
 
     document.addEventListener('DOMContentLoaded', () => {
+        registerOperatorServiceWorker();
         initSession().catch((e) => console.error('initSession failed:', e));
 
         const btnViewRecords = document.getElementById('btnViewRecords');
@@ -2660,19 +2864,31 @@
 
     // ── Duplicate Detection Logic ────────────────────────────────────────────────
     async function checkDuplicate(aadhar, contact) {
+        if (offlineReady() && operator.site) {
+            const outbox = await ParichayOffline.listOutbox(operator.site);
+            const pendingDup = ParichayOffline.findLocalDuplicate([], outbox, aadhar, contact);
+            if (pendingDup) return pendingDup;
+        }
         try {
-            const resp = await fetch(`${API_BASE}/api/check-duplicate`, {
+            const doFetch = offlineReady() ? ParichayOffline.apiFetch : fetch;
+            const resp = await doFetch(`${API_BASE}/api/check-duplicate`, {
                 method: 'POST',
                 headers: authHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ aadhar, contact })
-            });
-            if (!resp.ok) return null;
-            const result = await resp.json();
-            return result.duplicate ? result : null;
+            }, { retries: 1 });
+            if (resp.ok) {
+                const result = await resp.json();
+                if (result.duplicate) return result;
+            }
         } catch (e) {
             console.error('Duplicate check error:', e);
-            return null; // Fail safe
         }
+        if (offlineReady() && operator.site) {
+            const cached = await ParichayOffline.getCachedRecords(operator.site);
+            const outbox = await ParichayOffline.listOutbox(operator.site);
+            return ParichayOffline.findLocalDuplicate(cached, outbox, aadhar, contact);
+        }
+        return null;
     }
 
     function showDuplicateConfirm(dupData) {

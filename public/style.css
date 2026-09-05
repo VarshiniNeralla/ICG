@@ -122,6 +122,40 @@ body {
     justify-content: center;
 }
 
+/* ── OFFLINE / SYNC BANNER ── */
+.offline-banner {
+    position: sticky;
+    top: 0;
+    z-index: 3000;
+    width: 100%;
+    padding: 0.45rem 1rem;
+    text-align: center;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: #fff;
+}
+
+.offline-banner[hidden] {
+    display: none !important;
+}
+
+.offline-banner--offline {
+    background: #92400e;
+}
+
+.offline-banner--syncing {
+    background: #1a3c6e;
+}
+
+.offline-banner--warn {
+    background: #9a3412;
+}
+
+body.has-offline-banner .app-header {
+    top: 0;
+}
+
 /* ── NAVBAR ── */
 .app-header {
     background: white;
@@ -1653,6 +1687,31 @@ input[readonly] {
     background: var(--primary, #1a3c6e);
     color: #fff;
 }
+.sync-badge {
+    display: inline-block;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.65rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.sync-badge--synced {
+    background: #ecfdf5;
+    color: #047857;
+}
+.sync-badge--pending,
+.sync-badge--pending-reissue {
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+.sync-badge--conflict,
+.sync-badge--error {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+
 .btn-regen-card:disabled {
     opacity: 0.6;
     cursor: wait;
