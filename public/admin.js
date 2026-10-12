@@ -1372,7 +1372,10 @@ async function sortListAlpha(key, listId) {
 // Which site the super admin is currently editing (null = their own / site admin's site)
 let _manageSite = null;
 
-let _knownSites = ['Udyan', 'Vyoma', 'Nishada', 'Vipina', 'TTPL', 'Apas', 'Grava'];
+let _knownSites = [
+    'Udyan', 'Vyoma', 'Nishada', 'Vipina', 'TTPL', 'Apas', 'Grava',
+    'Precast', 'Grava Business Park', '99', 'Hyma RMC'
+];
 
 function getEffectiveSite() {
     // Site admin: always their own site (from session)
@@ -1387,6 +1390,11 @@ async function buildSiteSelector() {
     if (!bar || !tabs) return;
     const sites = await getListAPI('sites');
     if (sites.length) _knownSites = sites;
+    // Keep Manage in sync with dashboard when stats already loaded
+    if (_dashData && _dashData.bySite) {
+        _knownSites = [...new Set([..._knownSites, ...Object.keys(_dashData.bySite)])]
+            .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    }
     if (!_knownSites.includes(_manageSite)) _manageSite = _knownSites[0] || null;
     bar.style.display = '';
     tabs.innerHTML = '';

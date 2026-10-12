@@ -768,6 +768,27 @@ async function resolveSiteForRead(req) {
     return req.query.site || null;
 }
 
+const CANONICAL_SITES = [
+    'Udyan', 'Vyoma', 'Nishada', 'Vipina', 'TTPL', 'Apas', 'Grava',
+    'Precast', 'Grava Business Park', '99', 'Hyma RMC'
+];
+
+function mergeSortedSiteNames(...lists) {
+    const set = new Set();
+    for (const list of lists) {
+        if (!Array.isArray(list)) continue;
+        for (const name of list) {
+            if (typeof name === 'string' && name.trim()) set.add(name.trim());
+        }
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+async function enrichGlobalSiteList(storedList) {
+    const fromEmployees = await Employee.distinct('site');
+    return mergeSortedSiteNames(CANONICAL_SITES, storedList, fromEmployees);
+}
+
 const setupMasterDataRoute = (type, defaultData) => {
     app.get(`/api/${type}`, async (req, res) => {
         try {
@@ -779,15 +800,23 @@ const setupMasterDataRoute = (type, defaultData) => {
                     return res.json(siteDoc.data);
                 }
                 const globalDoc = await MasterData.findOne({ type, site: null });
-                return res.json(globalDoc && Array.isArray(globalDoc.data) && globalDoc.data.length > 0
+                const fallback = globalDoc && Array.isArray(globalDoc.data) && globalDoc.data.length > 0
                     ? globalDoc.data
-                    : defaultData);
+                    : defaultData;
+                if (type === 'sites') {
+                    return res.json(await enrichGlobalSiteList(fallback));
+                }
+                return res.json(fallback);
             } else {
                 // Super admin or no site — return global
                 const doc = await MasterData.findOne({ type, site: null });
-                return res.json(doc && Array.isArray(doc.data) && doc.data.length > 0
+                let data = doc && Array.isArray(doc.data) && doc.data.length > 0
                     ? doc.data
-                    : defaultData);
+                    : defaultData;
+                if (type === 'sites') {
+                    data = await enrichGlobalSiteList(data);
+                }
+                return res.json(data);
             }
         } catch (err) {
             console.error(err.message); res.status(500).json({ error: 'Internal server error' });
@@ -818,7 +847,7 @@ const setupMasterDataRoute = (type, defaultData) => {
     });
 };
 
-setupMasterDataRoute('sites', ['Grava', 'Apas', 'Vipina']);
+setupMasterDataRoute('sites', CANONICAL_SITES);
 setupMasterDataRoute('contractors', ['KLC PVT LTD', 'Sri Infra Works', 'Reddy Constructions', 'Others']);
 setupMasterDataRoute('roles', ['Worker', 'IT Engineer', 'MEP', 'Safety', 'Quality', 'Others']);
 
