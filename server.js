@@ -223,6 +223,11 @@ mongoose.connect(DB_URI)
             await mongoose.connection.collection('masterdatas').dropIndex('type_1');
             console.log('[Migration] Dropped legacy MasterData type_1 index');
         } catch (_) { /* index didn't exist — that's fine */ }
+        try {
+            await syncGlobalSitesMasterData();
+        } catch (err) {
+            console.error('[Migration] syncGlobalSitesMasterData failed:', err.message);
+        }
     })
     .catch(err => {
         console.error('ERROR: Could not connect to MongoDB Atlas:', err.message);
@@ -787,6 +792,46 @@ function mergeSortedSiteNames(...lists) {
 async function enrichGlobalSiteList(storedList) {
     const fromEmployees = await Employee.distinct('site');
     return mergeSortedSiteNames(CANONICAL_SITES, storedList, fromEmployees);
+}
+
+/** Append missing site names to the stored list; keep existing order. */
+function mergeSitesPreservingOrder(storedList, namesToInclude) {
+    const out = Array.isArray(storedList) ? [...storedList] : [];
+    const seen = new Set(out.map((s) => (typeof s === 'string' ? s.trim() : '')).filter(Boolean));
+    for (const name of namesToInclude) {
+        const t = typeof name === 'string' ? name.trim() : '';
+        if (t && !seen.has(t)) {
+            out.push(t);
+            seen.add(t);
+        }
+    }
+    return out;
+}
+
+/** Persist canonical + employee sites into global MasterData (e.g. Precast, Hyma RMC). */
+async function syncGlobalSitesMasterData() {
+    const doc = await MasterData.findOne({ type: 'sites', site: null });
+    const stored = doc && Array.isArray(doc.data) ? doc.data : [];
+    const fromEmployees = await Employee.distinct('site');
+    const required = mergeSortedSiteNames(CANONICAL_SITES, fromEmployees);
+    const base = stored.length > 0 ? stored : CANONICAL_SITES;
+    const merged = mergeSitesPreservingOrder(base, required);
+    const storedSet = new Set(
+        stored.map((s) => (typeof s === 'string' ? s.trim() : '')).filter(Boolean)
+    );
+    const added = merged.filter((s) => !storedSet.has(s));
+    if (!stored.length || added.length) {
+        await MasterData.findOneAndUpdate(
+            { type: 'sites', site: null },
+            { data: merged },
+            { upsert: true, new: true }
+        );
+        if (!stored.length) {
+            console.log(`[Migration] Initialized global sites MasterData (${merged.length} sites)`);
+        } else {
+            console.log(`[Migration] Updated global sites MasterData: +${added.join(', ')}`);
+        }
+    }
 }
 
 const setupMasterDataRoute = (type, defaultData) => {
