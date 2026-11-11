@@ -1446,6 +1446,465 @@
         }
     }
 
+    function fnv1a(str) {
+        let h = 2166136261;
+        for (let i = 0; i < str.length; i++) {
+            h ^= str.charCodeAt(i);
+            h = Math.imul(h, 16777619);
+        }
+        return h >>> 0;
+    }
+
+    function mulberry32(seed) {
+        let a = seed >>> 0;
+        return function () {
+            a = (a + 0x6D2B79F5) >>> 0;
+            let t = a;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+
+    function holoRgb(phase) {
+        const colors = [
+            [0, 188, 212],
+            [58, 92, 255],
+            [168, 64, 255],
+            [255, 48, 152],
+            [255, 176, 28],
+            [24, 196, 132]
+        ];
+        const p = ((phase % 1) + 1) % 1;
+        const scaled = p * colors.length;
+        const i0 = Math.floor(scaled) % colors.length;
+        const i1 = (i0 + 1) % colors.length;
+        const f = scaled - Math.floor(scaled);
+        return colors[i0].map((c, i) => Math.round(c + (colors[i1][i] - c) * f));
+    }
+
+    function holoCss(phase, alpha) {
+        const [r, g, b] = holoRgb(phase);
+        return `rgba(${r},${g},${b},${alpha})`;
+    }
+
+    function addHoloStops(gradient, phase, alpha) {
+        const steps = 16;
+        for (let i = 0; i <= steps; i++) {
+            gradient.addColorStop(i / steps, holoCss(phase + (i / steps) * 1.2, alpha));
+        }
+    }
+
+    function hologramIdentity(data) {
+        const site = getSiteCode(operator.site || data.site || 'SITE');
+        return [
+            String(data.fullName || '').trim().toUpperCase().replace(/\s+/g, ' '),
+            String(data.aadhar || '').replace(/\D/g, ''),
+            String(data.dob || '').trim(),
+            String(data.doi || data.issueDate || '').trim(),
+            site
+        ].join('|');
+    }
+
+    function formatSealCode(seed) {
+        const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        let s = seed >>> 0;
+        let out = '';
+        for (let i = 0; i < 6; i++) {
+            s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+            out += alphabet[s % alphabet.length];
+        }
+        return `${out.slice(0, 3)}-${out.slice(3)}`;
+    }
+
+    function hologramLegend(data, code) {
+        const name = String(data.fullName || 'UNKNOWN').trim().toUpperCase().replace(/\s+/g, ' ');
+        const aadhar = String(data.aadhar || '').replace(/\D/g, '') || '------------';
+        const site = getSiteCode(operator.site || data.site || 'SITE');
+        return `${name}  •  ${aadhar}  •  ${site}  •  ${code}`;
+    }
+
+    function ribbonCorners(cx, cy, angleDeg, len, width) {
+        const rad = angleDeg * Math.PI / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const hw = len / 2;
+        const hh = width / 2;
+        return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([x, y]) => [
+            cx + x * cos - y * sin,
+            cy + x * sin + y * cos
+        ]);
+    }
+
+    function traceCorners(ctx, pts) {
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        ctx.closePath();
+    }
+
+    function buildHologramSpec(data, phX, phY, phW, phH) {
+        const identity = hologramIdentity(data);
+        const seed = fnv1a(identity || 'ICG');
+        const rnd = mulberry32(seed);
+        const side = rnd() < 0.5 ? 'left' : 'right';
+        const sealR = 96 + rnd() * 12;
+        const inset = sealR * 0.34;
+        const sealCx = side === 'right' ? (phX + phW - inset) : (phX + inset);
+        const sealCy = phY + phH * (0.66 + rnd() * 0.1);
+        const bandAngle = (rnd() < 0.5 ? -1 : 1) * (7 + rnd() * 4);
+        return {
+            side,
+            sealR,
+            sealCx,
+            sealCy,
+            bandAngle,
+            bandW: 76 + rnd() * 10,
+            bandCx: phX + phW / 2,
+            bandCy: phY + phH * (0.62 + rnd() * 0.08),
+            bandLen: phW + 170,
+            foreheadW: 20 + rnd() * 4,
+            foreheadCy: phY + phH * (0.145 + rnd() * 0.04),
+            foreheadLen: phW + 110,
+            petals: 12 + Math.floor(rnd() * 5),
+            rayCount: 36 + Math.floor(rnd() * 18),
+            lobes: 6 + Math.floor(rnd() * 4),
+            hueShift: rnd(),
+            phase: rnd() * Math.PI * 2,
+            textShift: rnd() * 320,
+            code: formatSealCode(seed),
+            legend: hologramLegend(data, formatSealCode(seed)),
+            phX,
+            phY,
+            phW,
+            phH
+        };
+    }
+
+    function traceRibbon(ctx, spec) {
+        traceCorners(ctx, ribbonCorners(spec.bandCx, spec.bandCy, spec.bandAngle, spec.bandLen, spec.bandW));
+    }
+
+    function traceForehead(ctx, spec) {
+        traceCorners(ctx, ribbonCorners(spec.bandCx, spec.foreheadCy, spec.bandAngle, spec.foreheadLen, spec.foreheadW));
+    }
+
+    function traceSeal(ctx, spec) {
+        const steps = spec.petals * 2;
+        for (let i = 0; i <= steps; i++) {
+            const a = (i / steps) * Math.PI * 2 - Math.PI / 2 + spec.phase;
+            const rad = (i % 2 === 0) ? spec.sealR : spec.sealR * 0.9;
+            const x = spec.sealCx + Math.cos(a) * rad;
+            const y = spec.sealCy + Math.sin(a) * rad;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+    }
+
+    function fillRibbonGradient(ctx, cx, cy, angleDeg, len, width, phase, alpha) {
+        const pts = ribbonCorners(cx, cy, angleDeg, len, width);
+        ctx.beginPath();
+        traceCorners(ctx, pts);
+        const rad = angleDeg * Math.PI / 180;
+        const nx = -Math.sin(rad);
+        const ny = Math.cos(rad);
+        const g = ctx.createLinearGradient(cx - nx * width * 0.5, cy - ny * width * 0.5, cx + nx * width * 0.5, cy + ny * width * 0.5);
+        addHoloStops(g, phase, alpha);
+        ctx.fillStyle = g;
+        ctx.fill();
+    }
+
+    function fillSeal(ctx, spec) {
+        ctx.beginPath();
+        traceSeal(ctx, spec);
+        const g = ctx.createRadialGradient(spec.sealCx, spec.sealCy, spec.sealR * 0.08, spec.sealCx, spec.sealCy, spec.sealR);
+        g.addColorStop(0, holoCss(spec.hueShift + 0.55, 0.22));
+        g.addColorStop(0.5, holoCss(spec.hueShift, 0.4));
+        g.addColorStop(0.82, holoCss(spec.hueShift + 0.28, 0.55));
+        g.addColorStop(1, holoCss(spec.hueShift + 0.62, 0.7));
+        ctx.fillStyle = g;
+        ctx.fill();
+    }
+
+    function strokeTrace(ctx, trace, width, color) {
+        ctx.beginPath();
+        trace();
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = width;
+        ctx.strokeStyle = color;
+        ctx.stroke();
+    }
+
+    function drawRibbonSheen(ctx, spec) {
+        ctx.save();
+        ctx.beginPath();
+        traceRibbon(ctx, spec);
+        ctx.clip();
+        const rad = spec.bandAngle * Math.PI / 180;
+        const gx = Math.cos(rad);
+        const gy = Math.sin(rad);
+        const g = ctx.createLinearGradient(
+            spec.bandCx - gx * spec.bandLen * 0.45,
+            spec.bandCy - gy * spec.bandLen * 0.45,
+            spec.bandCx + gx * spec.bandLen * 0.45,
+            spec.bandCy + gy * spec.bandLen * 0.45
+        );
+        g.addColorStop(0, 'rgba(255,255,255,0)');
+        g.addColorStop(0.42, 'rgba(255,255,255,0)');
+        g.addColorStop(0.5, 'rgba(255,255,255,0.85)');
+        g.addColorStop(0.58, 'rgba(255,255,255,0)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.globalCompositeOperation = 'soft-light';
+        ctx.fillStyle = g;
+        ctx.fillRect(spec.bandCx - spec.bandLen, spec.bandCy - spec.bandW, spec.bandLen * 2, spec.bandW * 2);
+        ctx.restore();
+    }
+
+    function drawSealSheen(ctx, spec) {
+        ctx.save();
+        ctx.beginPath();
+        traceSeal(ctx, spec);
+        ctx.clip();
+        const ox = spec.sealCx - spec.sealR * 0.28;
+        const oy = spec.sealCy - spec.sealR * 0.32;
+        const g = ctx.createRadialGradient(ox, oy, 2, ox, oy, spec.sealR * 0.75);
+        g.addColorStop(0, 'rgba(255,255,255,0.8)');
+        g.addColorStop(0.4, 'rgba(255,255,255,0.2)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(spec.sealCx - spec.sealR, spec.sealCy - spec.sealR, spec.sealR * 2, spec.sealR * 2);
+        ctx.restore();
+    }
+
+    function strokeSealRays(ctx, spec) {
+        ctx.save();
+        ctx.beginPath();
+        traceSeal(ctx, spec);
+        ctx.clip();
+        ctx.translate(spec.sealCx, spec.sealCy);
+        ctx.rotate(spec.phase);
+        ctx.beginPath();
+        for (let i = 0; i < spec.rayCount; i++) {
+            const a = (i / spec.rayCount) * Math.PI * 2;
+            const inner = spec.sealR * 0.16;
+            const outer = spec.sealR * (i % 3 === 0 ? 0.96 : 0.74);
+            ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
+            ctx.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
+        }
+        ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    function strokeGuilloche(ctx, spec) {
+        ctx.save();
+        ctx.beginPath();
+        traceSeal(ctx, spec);
+        ctx.clip();
+        ctx.lineWidth = 0.9;
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        for (let i = 0; i < 7; i++) {
+            const base = spec.sealR * (0.2 + i * 0.1);
+            ctx.beginPath();
+            const steps = 96;
+            for (let s = 0; s <= steps; s++) {
+                const a = (s / steps) * Math.PI * 2;
+                const wobble = Math.sin(a * spec.lobes + spec.phase + i) * (2.2 + i * 0.35);
+                const rad = base + wobble;
+                const x = spec.sealCx + Math.cos(a) * rad;
+                const y = spec.sealCy + Math.sin(a) * rad;
+                if (s === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    function drawGhostPortrait(ctx, photo, spec) {
+        const r = spec.sealR * 0.62;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(spec.sealCx, spec.sealCy, r, 0, Math.PI * 2);
+        ctx.clip();
+        drawImageCover(ctx, photo, spec.sealCx - r, spec.sealCy - r, r * 2, r * 2);
+        ctx.globalCompositeOperation = 'color';
+        ctx.fillStyle = holoCss(spec.hueShift + 0.5, 0.78);
+        ctx.fillRect(spec.sealCx - r, spec.sealCy - r, r * 2, r * 2);
+        ctx.globalCompositeOperation = 'soft-light';
+        ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        ctx.fillRect(spec.sealCx - r, spec.sealCy - r, r * 2, r * 2);
+        ctx.restore();
+
+        ctx.beginPath();
+        ctx.arc(spec.sealCx, spec.sealCy, r, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+        ctx.lineWidth = 2.4;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(spec.sealCx, spec.sealCy, r + 5, 0, Math.PI * 2);
+        ctx.strokeStyle = holoCss(spec.hueShift + 0.12, 0.95);
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+    }
+
+    function strokeRibbonGrating(ctx, spec) {
+        ctx.save();
+        ctx.translate(spec.bandCx, spec.bandCy);
+        ctx.rotate(spec.bandAngle * Math.PI / 180);
+        ctx.beginPath();
+        ctx.rect(-spec.bandLen / 2, -spec.bandW / 2, spec.bandLen, spec.bandW);
+        ctx.clip();
+        ctx.beginPath();
+        for (let y = -spec.bandW / 2; y <= spec.bandW / 2; y += 3.4) {
+            ctx.moveTo(-spec.bandLen / 2, y);
+            ctx.lineTo(spec.bandLen / 2, y);
+        }
+        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.lineWidth = 1.15;
+        ctx.strokeStyle = holoCss(spec.hueShift + 0.18, 0.7);
+        const amp = spec.bandW * 0.16;
+        for (let row = -1; row <= 1; row++) {
+            const yBase = row * spec.bandW * 0.22;
+            let started = false;
+            for (let x = -spec.bandLen / 2; x <= spec.bandLen / 2; x += 3) {
+                const y = yBase + Math.sin((x / spec.bandLen) * Math.PI * 2 * (7 + spec.lobes) + spec.phase) * amp;
+                if (!started) { ctx.moveTo(x, y); started = true; }
+                else ctx.lineTo(x, y);
+            }
+        }
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    function drawHaloText(ctx, text, x, y, halo) {
+        ctx.lineWidth = halo == null ? 3.5 : halo;
+        ctx.strokeStyle = 'rgba(255,255,255,0.78)';
+        ctx.strokeText(text, x, y);
+        ctx.fillStyle = 'rgba(6, 16, 42, 0.9)';
+        ctx.fillText(text, x, y);
+    }
+
+    function drawRepeatingLegend(ctx, spec) {
+        ctx.save();
+        ctx.translate(spec.bandCx, spec.bandCy);
+        ctx.rotate(spec.bandAngle * Math.PI / 180);
+        ctx.beginPath();
+        ctx.rect(-spec.bandLen / 2, -spec.bandW / 2, spec.bandLen, spec.bandW);
+        ctx.clip();
+        ctx.font = '800 22px Inter';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        const legend = `${spec.legend}     `;
+        const step = Math.max(48, ctx.measureText(legend).width);
+        let x = -spec.bandLen / 2 - (spec.textShift % step);
+        const limit = spec.bandLen / 2 + step;
+        while (x < limit) {
+            drawHaloText(ctx, legend, x, 1);
+            x += step;
+        }
+        ctx.restore();
+    }
+
+    function drawForeheadLegend(ctx, spec, data) {
+        const aadhar = String(data.aadhar || '').replace(/\D/g, '') || '------------';
+        const line = `${aadhar}   ${spec.code}   `;
+        ctx.save();
+        ctx.translate(spec.bandCx, spec.foreheadCy);
+        ctx.rotate(spec.bandAngle * Math.PI / 180);
+        ctx.beginPath();
+        ctx.rect(-spec.foreheadLen / 2, -spec.foreheadW / 2, spec.foreheadLen, spec.foreheadW);
+        ctx.clip();
+        ctx.font = '700 13px Inter';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        const step = Math.max(40, ctx.measureText(line).width);
+        let x = -spec.foreheadLen / 2 - ((spec.textShift * 0.5) % step);
+        const limit = spec.foreheadLen / 2 + step;
+        while (x < limit) {
+            drawHaloText(ctx, line, x, 0);
+            x += step;
+        }
+        ctx.restore();
+    }
+
+    function drawSealRingText(ctx, spec) {
+        const site = getSiteCode(operator.site || 'SITE');
+        const unit = `${site} • ${spec.code} • `;
+        const radius = spec.sealR * 0.78;
+        ctx.save();
+        ctx.font = '700 11px Inter';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        let text = unit;
+        const circ = Math.PI * 2 * radius;
+        while (ctx.measureText(text).width < circ && text.length < 400) text += unit;
+        const chars = Array.from(text);
+        const step = (Math.PI * 2) / chars.length;
+        chars.forEach((ch, i) => {
+            const a = spec.phase + i * step;
+            ctx.save();
+            ctx.translate(spec.sealCx + Math.cos(a) * radius, spec.sealCy + Math.sin(a) * radius);
+            ctx.rotate(a + Math.PI / 2);
+            drawHaloText(ctx, ch, 0, 0, 2);
+            ctx.restore();
+        });
+        ctx.restore();
+    }
+
+    function drawEdgeBridges(ctx, spec) {
+        const rad = spec.bandAngle * Math.PI / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        if (Math.abs(cos) < 0.25) return;
+        [spec.phX, spec.phX + spec.phW].forEach((xEdge) => {
+            const t = (xEdge - spec.bandCx) / cos;
+            const y = spec.bandCy + t * sin;
+            ctx.save();
+            ctx.translate(xEdge, y);
+            ctx.rotate(Math.PI / 4);
+            ctx.fillStyle = 'rgba(255,255,255,0.95)';
+            ctx.strokeStyle = holoCss(spec.hueShift, 1);
+            ctx.lineWidth = 2;
+            const s = 11;
+            ctx.beginPath();
+            ctx.rect(-s, -s, s * 2, s * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+        });
+    }
+
+    // Foil is derived from name + Aadhaar + DOB + issue date + site, and is drawn
+    // across the photo boundary so a replaced portrait breaks the strip and the seal.
+    function drawPhotoHologram(ctx, photo, data, phX, phY, phW, phH) {
+        const spec = buildHologramSpec(data, phX, phY, phW, phH);
+        ctx.save();
+        fillRibbonGradient(ctx, spec.bandCx, spec.bandCy, spec.bandAngle, spec.bandLen, spec.bandW, spec.hueShift, 0.5);
+        fillSeal(ctx, spec);
+        fillRibbonGradient(ctx, spec.bandCx, spec.foreheadCy, spec.bandAngle, spec.foreheadLen, spec.foreheadW, spec.hueShift + 0.18, 0.46);
+        drawRibbonSheen(ctx, spec);
+        drawSealSheen(ctx, spec);
+        strokeSealRays(ctx, spec);
+        strokeGuilloche(ctx, spec);
+        drawGhostPortrait(ctx, photo, spec);
+        strokeRibbonGrating(ctx, spec);
+        strokeTrace(ctx, () => traceRibbon(ctx, spec), 5, 'rgba(8, 20, 48, 0.35)');
+        strokeTrace(ctx, () => traceRibbon(ctx, spec), 2.2, 'rgba(255,255,255,0.9)');
+        strokeTrace(ctx, () => traceSeal(ctx, spec), 4, 'rgba(8, 20, 48, 0.4)');
+        strokeTrace(ctx, () => traceSeal(ctx, spec), 1.8, 'rgba(255,255,255,0.92)');
+        strokeTrace(ctx, () => traceForehead(ctx, spec), 2.4, 'rgba(255,255,255,0.85)');
+        drawRepeatingLegend(ctx, spec);
+        drawForeheadLegend(ctx, spec, data);
+        drawSealRingText(ctx, spec);
+        drawEdgeBridges(ctx, spec);
+        ctx.restore();
+    }
+
     function drawWatermark(ctx) {
         const siteName = operator.site || "UNKNOWN";
         const firstLetter = siteName.charAt(0).toUpperCase();
@@ -1518,6 +1977,7 @@
                 ctx.fillRect(phX, phY, phW, phH);
                 drawImageCover(ctx, ph, phX, phY, phW, phH);
                 ctx.restore();
+                drawPhotoHologram(ctx, ph, data, phX, phY, phW, phH);
             } catch {
                 console.warn('Photo load failed, rendering card without photo.');
             }
