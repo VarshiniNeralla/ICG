@@ -303,6 +303,7 @@
     const batchList = document.getElementById('batchList');
     const btnClearBatch = document.getElementById('btnClearBatch');
     const btnPrintBatch = document.getElementById('btnPrintBatch');
+    const btnPdfBatch = document.getElementById('btnPdfBatch');
     const batchPrintArea = document.getElementById('batchPrintArea');
 
     const usernameInput = document.getElementById('username');
@@ -500,7 +501,7 @@
         state: document.getElementById('state').value,
         district: document.getElementById('district').value,
         address: document.getElementById('address').value.trim(),
-        contractor: resolveOthersSelect('contractor', 'contractorOther'),
+        contractor: (window.ContractorNormalizer ? ContractorNormalizer.normalizeContractor : (x) => x)(resolveOthersSelect('contractor', 'contractorOther')),
         laborCamp: document.getElementById('laborCamp').value,
         subContractor: document.getElementById('subContractor').value.trim(),
         subContractorContact: document.getElementById('subContractorContact').value.trim(),
@@ -1466,33 +1467,29 @@
         };
     }
 
-    function holoRgb(phase) {
-        const colors = [
-            [0, 188, 212],
-            [58, 92, 255],
-            [168, 64, 255],
-            [255, 48, 152],
-            [255, 176, 28],
-            [24, 196, 132]
-        ];
+    const HOLO_PALETTES = [
+        [[0, 176, 205], [64, 112, 255], [150, 96, 255], [214, 232, 255]],
+        [[0, 196, 170], [38, 144, 232], [118, 104, 244], [222, 240, 255]],
+        [[24, 156, 224], [96, 104, 252], [188, 112, 240], [232, 232, 255]]
+    ];
+
+    function holoRgb(pal, phase) {
         const p = ((phase % 1) + 1) % 1;
-        const scaled = p * colors.length;
-        const i0 = Math.floor(scaled) % colors.length;
-        const i1 = (i0 + 1) % colors.length;
+        const scaled = p * pal.length;
+        const i0 = Math.floor(scaled) % pal.length;
+        const i1 = (i0 + 1) % pal.length;
         const f = scaled - Math.floor(scaled);
-        return colors[i0].map((c, i) => Math.round(c + (colors[i1][i] - c) * f));
+        return pal[i0].map((c, i) => Math.round(c + (pal[i1][i] - c) * f));
     }
 
-    function holoCss(phase, alpha) {
-        const [r, g, b] = holoRgb(phase);
+    function holoCss(pal, phase, alpha) {
+        const [r, g, b] = holoRgb(pal, phase);
         return `rgba(${r},${g},${b},${alpha})`;
     }
 
-    function addHoloStops(gradient, phase, alpha) {
-        const steps = 16;
-        for (let i = 0; i <= steps; i++) {
-            gradient.addColorStop(i / steps, holoCss(phase + (i / steps) * 1.2, alpha));
-        }
+    function addHoloStops(g, pal, phase, alpha, span) {
+        const steps = 14;
+        for (let i = 0; i <= steps; i++) g.addColorStop(i / steps, holoCss(pal, phase + (i / steps) * span, alpha));
     }
 
     function hologramIdentity(data) {
@@ -1517,391 +1514,229 @@
         return `${out.slice(0, 3)}-${out.slice(3)}`;
     }
 
-    function hologramLegend(data, code) {
+    function buildHologramSpec(data, phX, phY, phW, phH) {
+        const seed = fnv1a(hologramIdentity(data) || 'ICG');
+        const rnd = mulberry32(seed);
+        const side = rnd() < 0.5 ? 'left' : 'right';
+        const sealR = 68;
+        const sealCx = side === 'right' ? phX + phW - sealR * 0.15 : phX + sealR * 0.15;
+        const code = formatSealCode(seed);
         const name = String(data.fullName || 'UNKNOWN').trim().toUpperCase().replace(/\s+/g, ' ');
         const aadhar = String(data.aadhar || '').replace(/\D/g, '') || '------------';
         const site = getSiteCode(operator.site || data.site || 'SITE');
-        return `${name}  •  ${aadhar}  •  ${site}  •  ${code}`;
-    }
-
-    function ribbonCorners(cx, cy, angleDeg, len, width) {
-        const rad = angleDeg * Math.PI / 180;
-        const cos = Math.cos(rad);
-        const sin = Math.sin(rad);
-        const hw = len / 2;
-        const hh = width / 2;
-        return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([x, y]) => [
-            cx + x * cos - y * sin,
-            cy + x * sin + y * cos
-        ]);
-    }
-
-    function traceCorners(ctx, pts) {
-        ctx.moveTo(pts[0][0], pts[0][1]);
-        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-        ctx.closePath();
-    }
-
-    function buildHologramSpec(data, phX, phY, phW, phH) {
-        const identity = hologramIdentity(data);
-        const seed = fnv1a(identity || 'ICG');
-        const rnd = mulberry32(seed);
-        const side = rnd() < 0.5 ? 'left' : 'right';
-        const sealR = 96 + rnd() * 12;
-        const inset = sealR * 0.34;
-        const sealCx = side === 'right' ? (phX + phW - inset) : (phX + inset);
-        const sealCy = phY + phH * (0.66 + rnd() * 0.1);
-        const bandAngle = (rnd() < 0.5 ? -1 : 1) * (7 + rnd() * 4);
         return {
-            side,
-            sealR,
-            sealCx,
-            sealCy,
-            bandAngle,
-            bandW: 76 + rnd() * 10,
-            bandCx: phX + phW / 2,
-            bandCy: phY + phH * (0.62 + rnd() * 0.08),
-            bandLen: phW + 170,
-            foreheadW: 20 + rnd() * 4,
-            foreheadCy: phY + phH * (0.145 + rnd() * 0.04),
-            foreheadLen: phW + 110,
-            petals: 12 + Math.floor(rnd() * 5),
-            rayCount: 36 + Math.floor(rnd() * 18),
-            lobes: 6 + Math.floor(rnd() * 4),
-            hueShift: rnd(),
+            side, sealR, sealCx,
+            sealCy: phY + phH * (0.855 + rnd() * 0.02),
+            pal: HOLO_PALETTES[Math.floor(rnd() * HOLO_PALETTES.length)],
+            hue: rnd(),
             phase: rnd() * Math.PI * 2,
-            textShift: rnd() * 320,
-            code: formatSealCode(seed),
-            legend: hologramLegend(data, formatSealCode(seed)),
-            phX,
-            phY,
-            phW,
-            phH
+            bandAngle: (rnd() < 0.5 ? -1 : 1) * (4 + rnd() * 3),
+            bandW: 46,
+            bandCx: phX + phW / 2,
+            bandCy: phY + phH * (0.625 + rnd() * 0.04),
+            bandLen: phW + 130,
+            foreCy: phY + phH * (0.15 + rnd() * 0.03),
+            foreW: 17,
+            foreLen: phW + 90,
+            petals: 20 + Math.floor(rnd() * 5) * 2,
+            lobes: 5 + Math.floor(rnd() * 4),
+            textShift: rnd() * 300,
+            code,
+            site,
+            legend: `${name}  •  ${aadhar}  •  ${site}  •  ${code}`,
+            foreLegend: `${aadhar}  ${code}  `,
+            phX, phY, phW, phH
         };
     }
 
-    function traceRibbon(ctx, spec) {
-        traceCorners(ctx, ribbonCorners(spec.bandCx, spec.bandCy, spec.bandAngle, spec.bandLen, spec.bandW));
+    function holoMicrotext(ctx, text, len, w, font, shift) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(-len / 2, -w / 2, len, w);
+        ctx.clip();
+        ctx.font = font;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(255,255,255,0.96)';
+        ctx.shadowColor = 'rgba(5,15,40,0.55)';
+        ctx.shadowBlur = 2;
+        const unit = `${text}     `;
+        const step = Math.max(40, ctx.measureText(unit).width);
+        for (let x = -len / 2 - (shift % step); x < len / 2 + step; x += step) ctx.fillText(unit, x, 1);
+        ctx.restore();
     }
 
-    function traceForehead(ctx, spec) {
-        traceCorners(ctx, ribbonCorners(spec.bandCx, spec.foreheadCy, spec.bandAngle, spec.foreheadLen, spec.foreheadW));
+    function drawHoloBand(ctx, spec, cy, w, len, textFont, text, alphaBase, shift) {
+        ctx.save();
+        ctx.translate(spec.bandCx, cy);
+        ctx.rotate(spec.bandAngle * Math.PI / 180);
+        // dark translucent base keeps the foil and its white text legible over both photo and card
+        ctx.fillStyle = `rgba(10,28,66,${alphaBase})`;
+        ctx.fillRect(-len / 2, -w / 2, len, w);
+        // iridescent colour travelling along the strip
+        ctx.globalCompositeOperation = 'screen';
+        const along = ctx.createLinearGradient(-len / 2, 0, len / 2, 0);
+        addHoloStops(along, spec.pal, spec.hue, 0.5, 1);
+        ctx.fillStyle = along;
+        ctx.fillRect(-len / 2, -w / 2, len, w);
+        // soft vertical sheen
+        ctx.globalCompositeOperation = 'source-over';
+        const sheen = ctx.createLinearGradient(0, -w / 2, 0, w / 2);
+        sheen.addColorStop(0, 'rgba(255,255,255,0.38)');
+        sheen.addColorStop(0.45, 'rgba(255,255,255,0.04)');
+        sheen.addColorStop(1, 'rgba(255,255,255,0.18)');
+        ctx.fillStyle = sheen;
+        ctx.fillRect(-len / 2, -w / 2, len, w);
+        // fine ruling
+        ctx.beginPath();
+        for (let y = -w / 2 + 3; y < w / 2; y += 3) { ctx.moveTo(-len / 2, y); ctx.lineTo(len / 2, y); }
+        ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+        ctx.lineWidth = 0.6;
+        ctx.stroke();
+        // edge rules
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 1.4;
+        ctx.strokeRect(-len / 2, -w / 2, len, w);
+        holoMicrotext(ctx, text, len, w, textFont, shift);
+        ctx.restore();
     }
 
     function traceSeal(ctx, spec) {
-        const steps = spec.petals * 2;
+        const R = spec.sealR;
+        const steps = 240;
+        ctx.beginPath();
         for (let i = 0; i <= steps; i++) {
-            const a = (i / steps) * Math.PI * 2 - Math.PI / 2 + spec.phase;
-            const rad = (i % 2 === 0) ? spec.sealR : spec.sealR * 0.9;
-            const x = spec.sealCx + Math.cos(a) * rad;
-            const y = spec.sealCy + Math.sin(a) * rad;
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
+            const a = (i / steps) * Math.PI * 2;
+            const r = R * (0.94 + 0.06 * Math.abs(Math.cos(a * spec.petals / 2)));
+            const x = spec.sealCx + Math.cos(a) * r;
+            const y = spec.sealCy + Math.sin(a) * r;
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         }
         ctx.closePath();
     }
 
-    function fillRibbonGradient(ctx, cx, cy, angleDeg, len, width, phase, alpha) {
-        const pts = ribbonCorners(cx, cy, angleDeg, len, width);
-        ctx.beginPath();
-        traceCorners(ctx, pts);
-        const rad = angleDeg * Math.PI / 180;
-        const nx = -Math.sin(rad);
-        const ny = Math.cos(rad);
-        const g = ctx.createLinearGradient(cx - nx * width * 0.5, cy - ny * width * 0.5, cx + nx * width * 0.5, cy + ny * width * 0.5);
-        addHoloStops(g, phase, alpha);
-        ctx.fillStyle = g;
+    function drawSeal(ctx, photo, spec) {
+        const { sealCx: cx, sealCy: cy, sealR: R, pal, hue } = spec;
+        ctx.save();
+        traceSeal(ctx, spec);
+        ctx.fillStyle = 'rgba(10,28,66,0.86)';
         ctx.fill();
-    }
-
-    function fillSeal(ctx, spec) {
-        ctx.beginPath();
-        traceSeal(ctx, spec);
-        const g = ctx.createRadialGradient(spec.sealCx, spec.sealCy, spec.sealR * 0.08, spec.sealCx, spec.sealCy, spec.sealR);
-        g.addColorStop(0, holoCss(spec.hueShift + 0.55, 0.22));
-        g.addColorStop(0.5, holoCss(spec.hueShift, 0.4));
-        g.addColorStop(0.82, holoCss(spec.hueShift + 0.28, 0.55));
-        g.addColorStop(1, holoCss(spec.hueShift + 0.62, 0.7));
+        ctx.clip();
+        ctx.globalCompositeOperation = 'screen';
+        const g = ctx.createLinearGradient(cx - R, cy - R, cx + R, cy + R);
+        addHoloStops(g, pal, hue + 0.2, 0.6, 1);
         ctx.fillStyle = g;
-        ctx.fill();
-    }
-
-    function strokeTrace(ctx, trace, width, color) {
-        ctx.beginPath();
-        trace();
-        ctx.lineJoin = 'round';
-        ctx.lineWidth = width;
-        ctx.strokeStyle = color;
-        ctx.stroke();
-    }
-
-    function drawRibbonSheen(ctx, spec) {
-        ctx.save();
-        ctx.beginPath();
-        traceRibbon(ctx, spec);
-        ctx.clip();
-        const rad = spec.bandAngle * Math.PI / 180;
-        const gx = Math.cos(rad);
-        const gy = Math.sin(rad);
-        const g = ctx.createLinearGradient(
-            spec.bandCx - gx * spec.bandLen * 0.45,
-            spec.bandCy - gy * spec.bandLen * 0.45,
-            spec.bandCx + gx * spec.bandLen * 0.45,
-            spec.bandCy + gy * spec.bandLen * 0.45
-        );
-        g.addColorStop(0, 'rgba(255,255,255,0)');
-        g.addColorStop(0.42, 'rgba(255,255,255,0)');
-        g.addColorStop(0.5, 'rgba(255,255,255,0.85)');
-        g.addColorStop(0.58, 'rgba(255,255,255,0)');
-        g.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.globalCompositeOperation = 'soft-light';
-        ctx.fillStyle = g;
-        ctx.fillRect(spec.bandCx - spec.bandLen, spec.bandCy - spec.bandW, spec.bandLen * 2, spec.bandW * 2);
-        ctx.restore();
-    }
-
-    function drawSealSheen(ctx, spec) {
-        ctx.save();
-        ctx.beginPath();
-        traceSeal(ctx, spec);
-        ctx.clip();
-        const ox = spec.sealCx - spec.sealR * 0.28;
-        const oy = spec.sealCy - spec.sealR * 0.32;
-        const g = ctx.createRadialGradient(ox, oy, 2, ox, oy, spec.sealR * 0.75);
-        g.addColorStop(0, 'rgba(255,255,255,0.8)');
-        g.addColorStop(0.4, 'rgba(255,255,255,0.2)');
-        g.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(spec.sealCx - spec.sealR, spec.sealCy - spec.sealR, spec.sealR * 2, spec.sealR * 2);
-        ctx.restore();
-    }
-
-    function strokeSealRays(ctx, spec) {
-        ctx.save();
-        ctx.beginPath();
-        traceSeal(ctx, spec);
-        ctx.clip();
-        ctx.translate(spec.sealCx, spec.sealCy);
-        ctx.rotate(spec.phase);
-        ctx.beginPath();
-        for (let i = 0; i < spec.rayCount; i++) {
-            const a = (i / spec.rayCount) * Math.PI * 2;
-            const inner = spec.sealR * 0.16;
-            const outer = spec.sealR * (i % 3 === 0 ? 0.96 : 0.74);
-            ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
-            ctx.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
-        }
-        ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-        ctx.lineWidth = 0.8;
-        ctx.stroke();
-        ctx.restore();
-    }
-
-    function strokeGuilloche(ctx, spec) {
-        ctx.save();
-        ctx.beginPath();
-        traceSeal(ctx, spec);
-        ctx.clip();
-        ctx.lineWidth = 0.9;
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-        for (let i = 0; i < 7; i++) {
-            const base = spec.sealR * (0.2 + i * 0.1);
+        ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+        ctx.globalCompositeOperation = 'source-over';
+        // guilloche rosette
+        ctx.lineWidth = 0.7;
+        ctx.strokeStyle = 'rgba(255,255,255,0.30)';
+        for (let k = 0; k < 2; k++) {
             ctx.beginPath();
-            const steps = 96;
-            for (let s = 0; s <= steps; s++) {
-                const a = (s / steps) * Math.PI * 2;
-                const wobble = Math.sin(a * spec.lobes + spec.phase + i) * (2.2 + i * 0.35);
-                const rad = base + wobble;
-                const x = spec.sealCx + Math.cos(a) * rad;
-                const y = spec.sealCy + Math.sin(a) * rad;
-                if (s === 0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
+            for (let s = 0; s <= 180; s++) {
+                const a = (s / 180) * Math.PI * 2;
+                const r = R * (0.88 + 0.05 * Math.sin(a * (spec.lobes * 3 + k * 2) + spec.phase + k));
+                const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+                if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
             }
             ctx.stroke();
         }
-        ctx.restore();
-    }
-
-    function drawGhostPortrait(ctx, photo, spec) {
-        const r = spec.sealR * 0.62;
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(spec.sealCx, spec.sealCy, r, 0, Math.PI * 2);
-        ctx.clip();
-        drawImageCover(ctx, photo, spec.sealCx - r, spec.sealCy - r, r * 2, r * 2);
-        ctx.globalCompositeOperation = 'color';
-        ctx.fillStyle = holoCss(spec.hueShift + 0.5, 0.78);
-        ctx.fillRect(spec.sealCx - r, spec.sealCy - r, r * 2, r * 2);
-        ctx.globalCompositeOperation = 'soft-light';
-        ctx.fillStyle = 'rgba(255,255,255,0.45)';
-        ctx.fillRect(spec.sealCx - r, spec.sealCy - r, r * 2, r * 2);
-        ctx.restore();
-
-        ctx.beginPath();
-        ctx.arc(spec.sealCx, spec.sealCy, r, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-        ctx.lineWidth = 2.4;
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(spec.sealCx, spec.sealCy, r + 5, 0, Math.PI * 2);
-        ctx.strokeStyle = holoCss(spec.hueShift + 0.12, 0.95);
-        ctx.lineWidth = 1.6;
-        ctx.stroke();
-    }
-
-    function strokeRibbonGrating(ctx, spec) {
-        ctx.save();
-        ctx.translate(spec.bandCx, spec.bandCy);
-        ctx.rotate(spec.bandAngle * Math.PI / 180);
-        ctx.beginPath();
-        ctx.rect(-spec.bandLen / 2, -spec.bandW / 2, spec.bandLen, spec.bandW);
-        ctx.clip();
-        ctx.beginPath();
-        for (let y = -spec.bandW / 2; y <= spec.bandW / 2; y += 3.4) {
-            ctx.moveTo(-spec.bandLen / 2, y);
-            ctx.lineTo(spec.bandLen / 2, y);
-        }
-        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-        ctx.lineWidth = 0.7;
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.lineWidth = 1.15;
-        ctx.strokeStyle = holoCss(spec.hueShift + 0.18, 0.7);
-        const amp = spec.bandW * 0.16;
-        for (let row = -1; row <= 1; row++) {
-            const yBase = row * spec.bandW * 0.22;
-            let started = false;
-            for (let x = -spec.bandLen / 2; x <= spec.bandLen / 2; x += 3) {
-                const y = yBase + Math.sin((x / spec.bandLen) * Math.PI * 2 * (7 + spec.lobes) + spec.phase) * amp;
-                if (!started) { ctx.moveTo(x, y); started = true; }
-                else ctx.lineTo(x, y);
+        for (let i = 0; i < 4; i++) {
+            ctx.beginPath();
+            const base = R * (0.58 + i * 0.045);
+            for (let s = 0; s <= 160; s++) {
+                const a = (s / 160) * Math.PI * 2;
+                const r = base + Math.sin(a * spec.lobes + spec.phase + i * 0.8) * 3;
+                const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+                if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
             }
+            ctx.stroke();
         }
-        ctx.stroke();
+        const hl = ctx.createRadialGradient(cx - R * 0.35, cy - R * 0.4, 2, cx - R * 0.35, cy - R * 0.4, R * 0.9);
+        hl.addColorStop(0, 'rgba(255,255,255,0.35)');
+        hl.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = hl;
+        ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
         ctx.restore();
-    }
 
-    function drawHaloText(ctx, text, x, y, halo) {
-        ctx.lineWidth = halo == null ? 3.5 : halo;
-        ctx.strokeStyle = 'rgba(255,255,255,0.78)';
-        ctx.strokeText(text, x, y);
-        ctx.fillStyle = 'rgba(6, 16, 42, 0.9)';
-        ctx.fillText(text, x, y);
-    }
-
-    function drawRepeatingLegend(ctx, spec) {
+        // ring text
+        const rt = R * 0.77;
+        const unit = `${spec.site} • ${spec.code} • `;
         ctx.save();
-        ctx.translate(spec.bandCx, spec.bandCy);
-        ctx.rotate(spec.bandAngle * Math.PI / 180);
-        ctx.beginPath();
-        ctx.rect(-spec.bandLen / 2, -spec.bandW / 2, spec.bandLen, spec.bandW);
-        ctx.clip();
-        ctx.font = '800 22px Inter';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        const legend = `${spec.legend}     `;
-        const step = Math.max(48, ctx.measureText(legend).width);
-        let x = -spec.bandLen / 2 - (spec.textShift % step);
-        const limit = spec.bandLen / 2 + step;
-        while (x < limit) {
-            drawHaloText(ctx, legend, x, 1);
-            x += step;
-        }
-        ctx.restore();
-    }
-
-    function drawForeheadLegend(ctx, spec, data) {
-        const aadhar = String(data.aadhar || '').replace(/\D/g, '') || '------------';
-        const line = `${aadhar}   ${spec.code}   `;
-        ctx.save();
-        ctx.translate(spec.bandCx, spec.foreheadCy);
-        ctx.rotate(spec.bandAngle * Math.PI / 180);
-        ctx.beginPath();
-        ctx.rect(-spec.foreheadLen / 2, -spec.foreheadW / 2, spec.foreheadLen, spec.foreheadW);
-        ctx.clip();
-        ctx.font = '700 13px Inter';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        const step = Math.max(40, ctx.measureText(line).width);
-        let x = -spec.foreheadLen / 2 - ((spec.textShift * 0.5) % step);
-        const limit = spec.foreheadLen / 2 + step;
-        while (x < limit) {
-            drawHaloText(ctx, line, x, 0);
-            x += step;
-        }
-        ctx.restore();
-    }
-
-    function drawSealRingText(ctx, spec) {
-        const site = getSiteCode(operator.site || 'SITE');
-        const unit = `${site} • ${spec.code} • `;
-        const radius = spec.sealR * 0.78;
-        ctx.save();
-        ctx.font = '700 11px Inter';
+        ctx.font = '700 10px Inter';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(255,255,255,0.95)';
         let text = unit;
-        const circ = Math.PI * 2 * radius;
-        while (ctx.measureText(text).width < circ && text.length < 400) text += unit;
+        const circ = Math.PI * 2 * rt;
+        while (ctx.measureText(text).width < circ * 0.97 && text.length < 300) text += unit;
         const chars = Array.from(text);
-        const step = (Math.PI * 2) / chars.length;
         chars.forEach((ch, i) => {
-            const a = spec.phase + i * step;
+            const a = spec.phase + (i / chars.length) * Math.PI * 2;
             ctx.save();
-            ctx.translate(spec.sealCx + Math.cos(a) * radius, spec.sealCy + Math.sin(a) * radius);
+            ctx.translate(cx + Math.cos(a) * rt, cy + Math.sin(a) * rt);
             ctx.rotate(a + Math.PI / 2);
-            drawHaloText(ctx, ch, 0, 0, 2);
+            ctx.fillText(ch, 0, 0);
             ctx.restore();
         });
         ctx.restore();
+
+        // small duotone copy of the same face
+        const fr = R * 0.5;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, fr, 0, Math.PI * 2);
+        ctx.clip();
+        drawImageCover(ctx, photo, cx - fr, cy - fr, fr * 2, fr * 2);
+        ctx.globalCompositeOperation = 'color';
+        ctx.fillStyle = holoCss(pal, hue + 0.1, 0.8);
+        ctx.fillRect(cx - fr, cy - fr, fr * 2, fr * 2);
+        ctx.restore();
+        ctx.beginPath();
+        ctx.arc(cx, cy, fr, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        traceSeal(ctx, spec);
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx, cy, R * 0.66, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
     }
 
-    function drawEdgeBridges(ctx, spec) {
+    function drawEdgeMarks(ctx, spec) {
         const rad = spec.bandAngle * Math.PI / 180;
-        const cos = Math.cos(rad);
-        const sin = Math.sin(rad);
-        if (Math.abs(cos) < 0.25) return;
+        const cos = Math.cos(rad), sin = Math.sin(rad);
         [spec.phX, spec.phX + spec.phW].forEach((xEdge) => {
-            const t = (xEdge - spec.bandCx) / cos;
-            const y = spec.bandCy + t * sin;
+            const y = spec.bandCy + ((xEdge - spec.bandCx) / cos) * sin;
             ctx.save();
             ctx.translate(xEdge, y);
             ctx.rotate(Math.PI / 4);
-            ctx.fillStyle = 'rgba(255,255,255,0.95)';
-            ctx.strokeStyle = holoCss(spec.hueShift, 1);
-            ctx.lineWidth = 2;
-            const s = 11;
+            ctx.fillStyle = 'rgba(255,255,255,0.97)';
+            ctx.strokeStyle = holoCss(spec.pal, spec.hue, 1);
+            ctx.lineWidth = 1.6;
             ctx.beginPath();
-            ctx.rect(-s, -s, s * 2, s * 2);
+            ctx.rect(-6, -6, 12, 12);
             ctx.fill();
             ctx.stroke();
             ctx.restore();
         });
     }
 
-    // Foil is derived from name + Aadhaar + DOB + issue date + site, and is drawn
-    // across the photo boundary so a replaced portrait breaks the strip and the seal.
+    // One cohesive foil per card: main strip, hairline forehead strip and seal share a
+    // palette and cross the photo edge, so swapping the portrait breaks them.
     function drawPhotoHologram(ctx, photo, data, phX, phY, phW, phH) {
         const spec = buildHologramSpec(data, phX, phY, phW, phH);
         ctx.save();
-        fillRibbonGradient(ctx, spec.bandCx, spec.bandCy, spec.bandAngle, spec.bandLen, spec.bandW, spec.hueShift, 0.5);
-        fillSeal(ctx, spec);
-        fillRibbonGradient(ctx, spec.bandCx, spec.foreheadCy, spec.bandAngle, spec.foreheadLen, spec.foreheadW, spec.hueShift + 0.18, 0.46);
-        drawRibbonSheen(ctx, spec);
-        drawSealSheen(ctx, spec);
-        strokeSealRays(ctx, spec);
-        strokeGuilloche(ctx, spec);
-        drawGhostPortrait(ctx, photo, spec);
-        strokeRibbonGrating(ctx, spec);
-        strokeTrace(ctx, () => traceRibbon(ctx, spec), 5, 'rgba(8, 20, 48, 0.35)');
-        strokeTrace(ctx, () => traceRibbon(ctx, spec), 2.2, 'rgba(255,255,255,0.9)');
-        strokeTrace(ctx, () => traceSeal(ctx, spec), 4, 'rgba(8, 20, 48, 0.4)');
-        strokeTrace(ctx, () => traceSeal(ctx, spec), 1.8, 'rgba(255,255,255,0.92)');
-        strokeTrace(ctx, () => traceForehead(ctx, spec), 2.4, 'rgba(255,255,255,0.85)');
-        drawRepeatingLegend(ctx, spec);
-        drawForeheadLegend(ctx, spec, data);
-        drawSealRingText(ctx, spec);
-        drawEdgeBridges(ctx, spec);
+        drawHoloBand(ctx, spec, spec.foreCy, spec.foreW, spec.foreLen, '700 10px Inter', spec.foreLegend, 0.82, spec.textShift * 0.5);
+        drawHoloBand(ctx, spec, spec.bandCy, spec.bandW, spec.bandLen, '800 16px Inter', spec.legend, 0.84, spec.textShift);
+        drawEdgeMarks(ctx, spec);
+        drawSeal(ctx, photo, spec);
         ctx.restore();
     }
 
@@ -2270,6 +2105,7 @@
         }
         document.querySelector('.batch-card .section-title').textContent = `Batch Queue (${batchQueue.length}/9)`;
         btnPrintBatch.disabled = batchQueue.length === 0;
+        if (btnPdfBatch) btnPdfBatch.disabled = batchQueue.length === 0;
 
         const mainMain = document.querySelector('.app-main');
         if (batchQueue.length > 0 && mainMain.classList.contains('layout-initial')) {
@@ -2315,6 +2151,38 @@
 
     function printBatch() {
         popupPrint(batchQueue.map(i => i.print || i.preview), 'Batch Print');
+    }
+
+    // A4 PDF made only of flattened card images (no text/fields to edit), with owner-password
+    // permissions that allow printing only: no editing, copying, annotating or form-filling.
+    function downloadLockedPdf() {
+        if (!batchQueue.length) return;
+        const jsPDF = window.jspdf && window.jspdf.jsPDF;
+        if (!jsPDF) { showAlert('PDF library failed to load. Refresh the page and try again.'); return; }
+        const rnd = new Uint8Array(16);
+        crypto.getRandomValues(rnd);
+        const ownerPassword = Array.from(rnd, b => b.toString(16).padStart(2, '0')).join('');
+        const pdf = new jsPDF({
+            orientation: 'portrait', unit: 'mm', format: 'a4', compress: true,
+            encryption: { userPassword: '', ownerPassword, userPermissions: ['print'] }
+        });
+        pdf.setProperties({ title: 'ID Cards', subject: 'Read-only', creator: 'ICG' });
+        const pad = 4, gap = 2, cols = 3, rows = 3;
+        const cellW = (210 - pad * 2 - gap * (cols - 1)) / cols;
+        const cellH = (297 - pad * 2 - gap * (rows - 1)) / rows;
+        batchQueue.forEach((item, i) => {
+            const page = Math.floor(i / 9);
+            if (i % 9 === 0 && page > 0) pdf.addPage();
+            const src = item.print || item.preview;
+            const props = pdf.getImageProperties(src);
+            const scale = Math.min(cellW / props.width, cellH / props.height);
+            const w = props.width * scale, h = props.height * scale;
+            const idx = i % 9;
+            const x = pad + (idx % cols) * (cellW + gap) + (cellW - w) / 2;
+            const y = pad + Math.floor(idx / cols) * (cellH + gap) + (cellH - h) / 2;
+            pdf.addImage(src, props.fileType, x, y, w, h, undefined, 'FAST');
+        });
+        pdf.save('ID_Cards_A4_ReadOnly.pdf');
     }
 
     function popupPrint(images, title = 'Print') {
@@ -3072,6 +2940,7 @@
             }
         };
         btnPrintBatch.onclick = () => printBatch();
+        if (btnPdfBatch) btnPdfBatch.onclick = () => downloadLockedPdf();
 
         // Clean up body print classes after single-card print dialog closes
         window.addEventListener('afterprint', () => {

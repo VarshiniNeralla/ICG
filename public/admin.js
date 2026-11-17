@@ -1,5 +1,7 @@
 'use strict';
 
+function displayContractor(c) { return (window.ContractorNormalizer ? ContractorNormalizer.normalizeContractor(c) : c) || ''; }
+
 /**
  * ENTRY PASS – ADMIN PANEL v1.0
  * Dashboard, Records, CRUD Management, Settings
@@ -756,7 +758,7 @@ function renderRecordsTable(records) {
             <td class="record-muted">${esc(r.state) || '---'}</td>
             <td class="record-muted">${esc(r.district) || '---'}</td>
             <td class="record-muted">${esc(r.address) || '---'}</td>
-            <td class="record-strong">${esc(r.contractor) || '---'}</td>
+            <td class="record-strong">${esc(displayContractor(r.contractor)) || '---'}</td>
             <td><span class="record-pill record-pill--camp">${esc(r.laborCamp) || '---'}</span></td>
             <td class="record-muted">${esc(r.subContractor) || '---'}</td>
             <td class="record-mono">${esc(r.subContractorContact) || '---'}</td>
@@ -909,7 +911,7 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
             row['State']        = r.state      || '---';
             row['District']     = r.district   || '---';
             row['Address']      = r.address    || '---';
-            row['Contractor']   = r.contractor || '---';
+            row['Contractor']   = displayContractor(r.contractor) || '---';
             row['Labor Camp']   = r.laborCamp  || '---';
             row['Thekedar'] = r.subContractor || '---';
             row['Thekedar Contact'] = r.subContractorContact || '---';
@@ -1002,7 +1004,7 @@ document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortA
                     ${td(x(r.state))}
                     ${td(x(r.district))}
                     ${td(x(r.address))}
-                    ${td(x(r.contractor))}
+                    ${td(x(displayContractor(r.contractor)))}
                     ${td(x(r.laborCamp))}
                     ${td(x(r.subContractor))}
                     ${td(r.subContractorContact)}

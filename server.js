@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const cloudinary = require('cloudinary').v2;
 const https = require('https');
+const ContractorNormalizer = require('./public/contractor-normalizer.js');
 // Inline security headers (replaces helmet — avoids npm install issues on restricted networks)
 function inlineHelmet(options = {}) {
     return (req, res, next) => {
@@ -81,16 +82,19 @@ app.set('trust proxy', 1);
 app.use(inlineHelmet({ contentSecurityPolicy: false }));
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean);
-app.use(cors({
-    origin: (origin, cb) => {
-        // Allow same-origin (no origin header) and localhost for dev
-        if (!origin || ALLOWED_ORIGINS.includes(origin)
-            || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
-            || /\.onrender\.com$/.test(origin)) {
-            cb(null, true);
-        } else {
-            cb(new Error('Not allowed by CORS'));
-        }
+const PRIVATE_LAN_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/;
+app.use(cors((req, cb) => {
+    const origin = req.headers.origin;
+    // Same-origin: browser's Origin matches the Host it is talking to (e.g. another laptop on the LAN)
+    const sameOrigin = origin && req.headers.host &&
+        (origin === `http://${req.headers.host}` || origin === `https://${req.headers.host}`);
+    const lanOk = process.env.NODE_ENV !== 'production' && origin && PRIVATE_LAN_ORIGIN.test(origin);
+    if (!origin || sameOrigin || lanOk || ALLOWED_ORIGINS.includes(origin)
+        || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+        || /\.onrender\.com$/.test(origin)) {
+        cb(null, { origin: true });
+    } else {
+        cb(new Error('Not allowed by CORS'));
     }
 }));
 
@@ -239,6 +243,22 @@ const server = app.listen(PORT, ...(HOST ? [HOST] : []), () => {
     console.log(`[Startup] Server listening on ${HOST || '::'}:${PORT}`);
     console.log(`[Startup] NODE_ENV=${process.env.NODE_ENV || 'development'}`);
 });
+
+// Optional HTTPS (needed for camera access from other devices on the LAN).
+// Enabled automatically when certs/key.pem and certs/cert.pem exist.
+const HTTPS_PORT = process.env.HTTPS_PORT || 5443;
+try {
+    const keyPath = path.join(__dirname, 'certs', 'key.pem');
+    const certPath = path.join(__dirname, 'certs', 'cert.pem');
+    if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+        https.createServer({ key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) }, app)
+            .listen(HTTPS_PORT, ...(HOST ? [HOST] : []), () => {
+                console.log(`[Startup] HTTPS listening on ${HOST || '::'}:${HTTPS_PORT}`);
+            });
+    }
+} catch (e) {
+    console.warn('[Startup] HTTPS not started:', e.message);
+}
 
 // ── Graceful Shutdown ───────────────────────────────────────────────────────
 const shutdown = (signal) => {
@@ -442,6 +462,13 @@ app.post('/api/save-employee', requireAuth, async (req, res) => {
 
     try {
         const { fullName, photoPath, ...otherData } = req.body;
+
+        // Club spelling/case variants of the same contractor (e.g. every KLC - <name> -> KLC)
+        if (otherData.contractor) {
+            const subFromName = ContractorNormalizer.extractSubName(otherData.contractor);
+            otherData.contractor = ContractorNormalizer.normalizeContractor(otherData.contractor);
+            if (subFromName && !String(otherData.subContractor || '').trim()) otherData.subContractor = subFromName;
+        }
 
         // ── Server-side Input Validation ─────────────────────────────────────
         if (!fullName || fullName.trim().length < 3 || !/^[A-Za-z.\s]+$/.test(fullName.trim())) {
@@ -710,6 +737,15 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
             Employee.aggregate(ageOtherBreakdownPipeline, { maxTimeMS: 5000 })
         ]);
 
+        const formatContractorGroup = (arr) => {
+            const obj = {};
+            arr.forEach(item => {
+                const key = ContractorNormalizer.normalizeContractor(item._id) || 'Unspecified';
+                obj[key] = (obj[key] || 0) + item.count;
+            });
+            return obj;
+        };
+
         const formatGroup = (arr) => {
             const obj = {};
             arr.forEach(item => {
@@ -731,7 +767,7 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
 
         res.json({
             total, today, week, month,
-            byContractor: formatGroup(byContractor),
+            byContractor: formatContractorGroup(byContractor),
             ageOtherBreakdown: ageOtherBreakdownObj,
             bySite: formatGroup(bySite),
             byDesignation: formatGroup(byDesignation),
@@ -834,6 +870,8 @@ async function syncGlobalSitesMasterData() {
     }
 }
 
+const cleanList = (type, list) => type === 'contractors' ? ContractorNormalizer.normalizeList(list) : list;
+
 const setupMasterDataRoute = (type, defaultData) => {
     app.get(`/api/${type}`, async (req, res) => {
         try {
@@ -842,7 +880,7 @@ const setupMasterDataRoute = (type, defaultData) => {
                 // Try site-specific first; empty docs fall back to global defaults
                 const siteDoc = await MasterData.findOne({ type, site });
                 if (siteDoc && Array.isArray(siteDoc.data) && siteDoc.data.length > 0) {
-                    return res.json(siteDoc.data);
+                    return res.json(cleanList(type, siteDoc.data));
                 }
                 const globalDoc = await MasterData.findOne({ type, site: null });
                 const fallback = globalDoc && Array.isArray(globalDoc.data) && globalDoc.data.length > 0
@@ -851,7 +889,7 @@ const setupMasterDataRoute = (type, defaultData) => {
                 if (type === 'sites') {
                     return res.json(await enrichGlobalSiteList(fallback));
                 }
-                return res.json(fallback);
+                return res.json(cleanList(type, fallback));
             } else {
                 // Super admin or no site — return global
                 const doc = await MasterData.findOne({ type, site: null });
@@ -861,7 +899,7 @@ const setupMasterDataRoute = (type, defaultData) => {
                 if (type === 'sites') {
                     data = await enrichGlobalSiteList(data);
                 }
-                return res.json(data);
+                return res.json(cleanList(type, data));
             }
         } catch (err) {
             console.error(err.message); res.status(500).json({ error: 'Internal server error' });
@@ -874,8 +912,9 @@ const setupMasterDataRoute = (type, defaultData) => {
             if (!Array.isArray(data) || data.length > 100) {
                 return res.status(400).json({ error: 'Invalid data: must be an array with max 100 items.' });
             }
-            const cleaned = data.filter(item => typeof item === 'string' && item.trim().length > 0)
+            let cleaned = data.filter(item => typeof item === 'string' && item.trim().length > 0)
                                 .map(item => item.trim());
+            if (type === 'contractors') cleaned = ContractorNormalizer.normalizeList(cleaned);
             // Scope to the admin's own site.
             // Super admin (site=null) may pass ?site= to edit a specific site's data.
             let site = req.userSession.site || null;

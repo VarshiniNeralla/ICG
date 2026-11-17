@@ -387,6 +387,7 @@
                     <div id="batchList" class="batch-shelf"></div>
                     <div class="batch-footer">
                         <button id="btnClearBatch" class="btn btn-ghost btn-xs">Clear</button>
+                        <button id="btnPdfBatch" class="btn btn-ghost btn-sm" disabled title="Locked A4 PDF: cannot be edited, copied or modified">Download PDF (Read-only)</button>
                         <button id="btnPrintBatch" class="btn btn-primary btn-sm" disabled>Print Batch (A4)</button>
                     </div>
                 </div>
@@ -590,7 +591,9 @@
 
     <script src="xlsx.min.js"></script>
     <script src="states-districts.js?v=delhi-districts"></script>
-    <script src="script.js?v=photo-hologram"></script>
+    <script src="vendor/jspdf.umd.min.js"></script>
+    <script src="contractor-normalizer.js"></script>
+    <script src="script.js?v=readonly-pdf"></script>
 </body>
 
 </html>
