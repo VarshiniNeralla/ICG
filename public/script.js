@@ -506,7 +506,7 @@
         subContractor: document.getElementById('subContractor').value.trim(),
         subContractorContact: document.getElementById('subContractorContact').value.trim(),
         doi: document.getElementById('doi').value,
-        designation: resolveOthersSelect('designation', 'designationOther'),
+        designation: (window.DesignationNormalizer ? DesignationNormalizer.normalizeDesignation : (x) => x)(resolveOthersSelect('designation', 'designationOther')),
         validity: document.getElementById('validity').value,
         issueDate: document.getElementById('issueDate').value,
         contact: document.getElementById('contact').value.trim(),

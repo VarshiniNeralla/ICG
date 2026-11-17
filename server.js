@@ -8,6 +8,7 @@ const fs = require('fs');
 const cloudinary = require('cloudinary').v2;
 const https = require('https');
 const ContractorNormalizer = require('./public/contractor-normalizer.js');
+const DesignationNormalizer = require('./public/designation-normalizer.js');
 // Inline security headers (replaces helmet — avoids npm install issues on restricted networks)
 function inlineHelmet(options = {}) {
     return (req, res, next) => {
@@ -466,6 +467,9 @@ app.post('/api/save-employee', requireAuth, async (req, res) => {
     try {
         const { fullName, photoPath, ...otherData } = req.body;
 
+        // Standardize designation spelling/case (e.g. PENTER / panting -> Painter)
+        if (otherData.designation) otherData.designation = DesignationNormalizer.normalizeDesignation(otherData.designation);
+
         // Club spelling/case variants of the same contractor (e.g. every KLC - <name> -> KLC)
         if (otherData.contractor) {
             const subFromName = ContractorNormalizer.extractSubName(otherData.contractor);
@@ -759,6 +763,15 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
             return obj;
         };
 
+        const formatDesignationGroup = (arr) => {
+            const obj = {};
+            arr.forEach(item => {
+                const key = DesignationNormalizer.normalizeDesignation(item._id) || 'Unspecified';
+                obj[key] = (obj[key] || 0) + item.count;
+            });
+            return obj;
+        };
+
         const formatGroup = (arr) => {
             const obj = {};
             arr.forEach(item => {
@@ -783,7 +796,7 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
             byContractor: formatContractorGroup(byContractor),
             ageOtherBreakdown: ageOtherBreakdownObj,
             bySite: formatGroup(bySite),
-            byDesignation: formatGroup(byDesignation),
+            byDesignation: formatDesignationGroup(byDesignation),
             byState: formatGroup(byState),
             byDistrict: formatGroup(byDistrict),
             byAgeGroup: byAgeGroupObj
@@ -883,7 +896,8 @@ async function syncGlobalSitesMasterData() {
     }
 }
 
-const cleanList = (type, list) => type === 'contractors' ? ContractorNormalizer.normalizeList(list) : list;
+const cleanList = (type, list) => type === 'contractors' ? ContractorNormalizer.normalizeList(list)
+    : type === 'roles' ? DesignationNormalizer.normalizeList(list) : list;
 
 const setupMasterDataRoute = (type, defaultData) => {
     app.get(`/api/${type}`, async (req, res) => {
@@ -928,6 +942,7 @@ const setupMasterDataRoute = (type, defaultData) => {
             let cleaned = data.filter(item => typeof item === 'string' && item.trim().length > 0)
                                 .map(item => item.trim());
             if (type === 'contractors') cleaned = ContractorNormalizer.normalizeList(cleaned);
+            if (type === 'roles') cleaned = DesignationNormalizer.normalizeList(cleaned);
             // Scope to the admin's own site.
             // Super admin (site=null) may pass ?site= to edit a specific site's data.
             let site = req.userSession.site || null;

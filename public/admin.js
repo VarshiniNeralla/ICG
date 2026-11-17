@@ -1,5 +1,6 @@
 'use strict';
 
+function displayDesignation(d) { return (window.DesignationNormalizer ? DesignationNormalizer.normalizeDesignation(d) : d) || ''; }
 function displayContractor(c) { return (window.ContractorNormalizer ? ContractorNormalizer.normalizeContractor(c) : c) || ''; }
 
 /**
@@ -737,7 +738,7 @@ function renderRecordsTable(records) {
             <td><span class="record-pill record-pill--camp">${esc(r.laborCamp) || '---'}</span></td>
             <td class="record-muted">${esc(r.subContractor) || '---'}</td>
             <td class="record-mono">${esc(r.subContractorContact) || '---'}</td>
-            <td><span class="record-pill record-pill--designation">${esc(r.designation) || '---'}</span></td>
+            <td><span class="record-pill record-pill--designation">${esc(displayDesignation(r.designation)) || '---'}</span></td>
             <td class="record-mono">${esc(r.contact) || '---'}</td>
             <td><span class="record-pill record-pill--site">${esc(r.site) || 'EMPTY'}</span></td>
             <td class="record-muted">${esc(r.operator) || 'EMPTY'}</td>
@@ -904,7 +905,7 @@ document.getElementById('sortRecords').onchange = () => sortAndRenderRecords();
             row['Labor Camp']   = r.laborCamp  || '---';
             row['Thekedar'] = r.subContractor || '---';
             row['Thekedar Contact'] = r.subContractorContact || '---';
-            row['Designation']  = r.designation|| '---';
+            row['Designation']  = displayDesignation(r.designation) || '---';
             row['Contact']      = String(r.contact || '---');
             row['Site']         = r.site       || '---';
             row['Operator']     = r.operator   || '---';
@@ -997,7 +998,7 @@ document.getElementById('sortRecords').onchange = () => sortAndRenderRecords();
                     ${td(x(r.laborCamp))}
                     ${td(x(r.subContractor))}
                     ${td(r.subContractorContact)}
-                    ${td(x(r.designation))}
+                    ${td(x(displayDesignation(r.designation)))}
                     ${td(r.contact)}
                     ${td(x(r.site))}
                     ${td(x(r.operator))}
