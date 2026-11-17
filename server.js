@@ -303,6 +303,9 @@ const EmployeeSchema = new mongoose.Schema({
 });
 
 // Unique sparse indexes — prevent duplicate Aadhar/contact at DB level
+// Indexes that back the Records tab (default sort + site filter) so paging never scans/sorts the whole collection
+EmployeeSchema.index({ createdAt: -1 });
+EmployeeSchema.index({ site: 1, createdAt: -1 });
 EmployeeSchema.index({ aadhar: 1 }, { unique: true, sparse: true });
 EmployeeSchema.index({ contact: 1 }, { unique: true, sparse: true });
 
@@ -599,10 +602,20 @@ app.get('/api/employees', requireAuth, async (req, res) => {
         const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 200));
         const skip = (page - 1) * limit;
 
-        const [employees, total] = await Promise.all([
-            Employee.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
-            Employee.countDocuments(filter)
-        ]);
+        // Whitelisted server-side sorts (so the client only ever needs one page at a time)
+        const SORTS = {
+            latest: { createdAt: -1 }, oldest: { createdAt: 1 },
+            age_asc: { age: 1 }, age_desc: { age: -1 },
+            name_az: { fullName: 1 }, name_za: { fullName: -1 },
+            gender: { gender: 1 }, designation: { designation: 1 },
+            site: { site: 1 }, camp: { laborCamp: 1 }
+        };
+        const sortKey = SORTS[req.query.sort] ? req.query.sort : 'latest';
+        const sort = { ...SORTS[sortKey], createdAt: SORTS[sortKey].createdAt || -1, _id: -1 };
+        const q = Employee.find(filter).sort(sort).skip(skip).limit(limit).lean();
+        if (sortKey !== 'latest' && sortKey !== 'oldest') q.collation({ locale: 'en', strength: 2, numericOrdering: true });
+
+        const [employees, total] = await Promise.all([q, Employee.countDocuments(filter)]);
         res.json({ data: employees, total, page, limit, pages: Math.ceil(total / limit) });
     } catch (err) {
         console.error(err.message); res.status(500).json({ error: 'Internal server error' });

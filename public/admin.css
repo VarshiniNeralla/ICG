@@ -983,16 +983,35 @@ body {
 
 .chart-grid.chart-grid--single { margin-top: 1.25rem; }
 
-.chart-site-filter { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+/* Compact site dropdown that sits at the right of each chart header */
+.chart-site-filter { flex: 0 0 auto; margin-left: auto; }
+.site-select {
+    appearance: none;
+    -webkit-appearance: none;
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text);
+    background: #f8fafc url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 0.65rem center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.38rem 1.9rem 0.38rem 0.7rem;
+    min-width: 108px;
+    max-width: 170px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.site-select:hover { border-color: rgba(26, 60, 110, 0.4); background-color: #fff; }
+.site-select:focus-visible { outline: 2px solid rgba(26, 60, 110, 0.35); outline-offset: 1px; }
 
 /* New chart cards: let the site-filter pills wrap below the title instead of squeezing it */
 #designationChartCard .chart-card-header,
 #ageChartCard .chart-card-header,
 #stateChartCard .chart-card-header,
 #districtChartCard .chart-card-header {
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    row-gap: 0.6rem;
+    flex-wrap: nowrap;
+    gap: 0.75rem;
+    align-items: center;
 }
 #designationChartCard .chart-title,
 #ageChartCard .chart-title,
@@ -1004,7 +1023,7 @@ body {
 /* ─── DONUT CHART ───────────────────────────────────────────────── */
 .donut-wrap {
     display: flex;
-    align-items: center;
+    align-items: flex-start; /* donuts line up at the same height across side-by-side cards */
     gap: 1.75rem;
     flex-wrap: wrap;
     /* Keep the donut + legend a tidy block instead of stretching across a wide card */
@@ -1014,10 +1033,14 @@ body {
 
 .donut-svg-wrap {
     position: relative;
-    width: 150px;
-    height: 150px;
+    width: 160px;
+    height: 160px;
     flex-shrink: 0;
 }
+.donut-svg-wrap svg { display: block; width: 160px; height: 160px; }
+.donut-svg-wrap svg path { transition: opacity 0.15s ease; }
+.donut-svg-wrap svg:hover path { opacity: 0.55; }
+.donut-svg-wrap svg path:hover { opacity: 1; }
 
 .donut-center {
     position: absolute;

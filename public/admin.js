@@ -321,29 +321,25 @@ function renderSiteCountGrid(bySite) {
 
 let _contractorSiteFilter = null; // null = all sites
 
+function siteSelectHtml(sites, current, attrs) {
+    return `<select class="site-select" aria-label="Filter by site" ${attrs}>` +
+        `<option value="">All sites</option>` +
+        sites.map(x => `<option value="${esc(x)}"${x === current ? ' selected' : ''}>${esc(x)}</option>`).join('') +
+        '</select>';
+}
+
 function buildContractorSiteFilter(bySite) {
     const wrap = document.getElementById('contractorSiteFilter');
     if (!wrap) return;
     const sites = Object.keys(bySite).sort();
     if (sites.length < 2) { wrap.style.display = 'none'; return; }
-    wrap.style.display = 'flex';
-    const render = () => {
-        wrap.innerHTML = [null, ...sites].map(s => {
-            const active = _contractorSiteFilter === s;
-            const label = s === null ? 'All' : s;
-            return `<button type="button"
-                style="padding:0.22rem 0.65rem;border-radius:20px;font-size:0.68rem;font-weight:700;font-family:inherit;cursor:pointer;border:1.5px solid ${active ? 'var(--primary)' : 'var(--border)'};background:${active ? 'var(--primary)' : '#fff'};color:${active ? '#fff' : 'var(--text-light)'};transition:all 0.15s;"
-                onclick="selectContractorSite(${s === null ? 'null' : `'${s}'`})">${esc(label)}</button>`;
-        }).join('');
-    };
-    render();
-    wrap._render = render;
+    wrap.style.display = 'block';
+    wrap.innerHTML = siteSelectHtml(sites, _contractorSiteFilter, '');
+    wrap.querySelector('select').onchange = (e) => selectContractorSite(e.target.value || null);
 }
 
 async function selectContractorSite(site) {
     _contractorSiteFilter = site;
-    const wrap = document.getElementById('contractorSiteFilter');
-    if (wrap && wrap._render) wrap._render();
     if (!site) {
         renderHorizontalChart('contractorChartArea', _dashData.byContractor || {}, 'contractorChartSubtitle');
         document.getElementById('contractorChartSubtitle').textContent = 'All records';
@@ -382,30 +378,14 @@ function buildChartSiteFilter(wrapId, bySite, renderFn) {
     if (!wrap) return;
     const sites = Object.keys(bySite).sort();
     if (sites.length < 2) { wrap.style.display = 'none'; return; }
-    wrap.style.display = 'flex';
-    wrap.style.gap = '0.4rem';
-    wrap.style.flexWrap = 'wrap';
-    let active = null;
-    const render = () => {
-        wrap.innerHTML = [null, ...sites].map(s => {
-            const on = active === s;
-            const label = s === null ? 'All' : s;
-            return `<button type="button"
-                style="padding:0.22rem 0.65rem;border-radius:20px;font-size:0.68rem;font-weight:700;font-family:inherit;cursor:pointer;border:1.5px solid ${on ? 'var(--primary)' : 'var(--border)'};background:${on ? 'var(--primary)' : '#fff'};color:${on ? '#fff' : 'var(--text-light)'};transition:all 0.15s;"
-                data-site="${s === null ? '' : esc(s)}">${esc(label)}</button>`;
-        }).join('');
-        wrap.querySelectorAll('button').forEach(btn => {
-            btn.onclick = async () => {
-                const s = btn.getAttribute('data-site') || null;
-                active = s;
-                render();
-                if (!s) { renderFn(_dashData, null); return; }
-                const data = await fetchSiteStats(s);
-                if (data) renderFn(data, s);
-            };
-        });
+    wrap.style.display = 'block';
+    wrap.innerHTML = siteSelectHtml(sites, null, '');
+    wrap.querySelector('select').onchange = async (e) => {
+        const site = e.target.value || null;
+        if (!site) { renderFn(_dashData, null); return; }
+        const data = await fetchSiteStats(site);
+        if (data) renderFn(data, site);
     };
-    render();
 }
 
 async function renderDashPeriod() {
@@ -615,24 +595,33 @@ function renderDonutChart(containerId, dataObj, subtitleId, knownBreakdowns) {
         return;
     }
 
-    // Build SVG donut using stroke-dasharray segments on concentric circle arcs.
-    const R = 60, C = 2 * Math.PI * R, CX = 80, CY = 80, SW = 26;
-    let offset = 0;
-    const segments = entries.map(([, value], i) => {
+    // Ring slices drawn as real annular-sector paths (no stacked-circle seams). Even white
+    // separators between slices; "Others"/"Other"/"Unspecified" always use one neutral grey.
+    const CX = 80, CY = 80, R_OUT = 74, R_IN = 48;
+    const isNeutral = (l) => /^(others?|unspecified)$/i.test(String(l));
+    const neutralColor = (l) => /^unspecified$/i.test(String(l)) ? '#cbd5e1' : '#94a3b8';
+    let colorIdx = 0;
+    const colors = entries.map(([label]) => isNeutral(label) ? neutralColor(label) : CHART_COLORS[colorIdx++ % CHART_COLORS.length]);
+    const pt = (r, ang) => [CX + r * Math.cos(ang), CY + r * Math.sin(ang)];
+    let ang0 = -Math.PI / 2;
+    const segments = entries.map(([label, value], i) => {
         const frac = value / total;
-        const dash = frac * C;
-        const color = CHART_COLORS[i % CHART_COLORS.length];
-        const seg = `<circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="${color}" stroke-width="${SW}"
-            stroke-dasharray="${dash.toFixed(2)} ${(C - dash).toFixed(2)}"
-            stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${CX} ${CY})"
-            style="transition:stroke-dasharray 0.6s cubic-bezier(0.4,0,0.2,1);"></circle>`;
-        offset += dash;
-        return seg;
+        const color = colors[i];
+        const tip = `${esc(label)}: ${value} (${(frac * 100).toFixed(1)}%)`;
+        if (frac >= 0.9999) {
+            return `<path d="M ${CX} ${CY - R_OUT} A ${R_OUT} ${R_OUT} 0 1 1 ${CX - 0.01} ${CY - R_OUT} L ${CX - 0.01} ${CY - R_IN} A ${R_IN} ${R_IN} 0 1 0 ${CX} ${CY - R_IN} Z" fill="${color}" fill-rule="evenodd"><title>${tip}</title></path>`;
+        }
+        const ang1 = ang0 + frac * Math.PI * 2;
+        const large = frac > 0.5 ? 1 : 0;
+        const [x0, y0] = pt(R_OUT, ang0), [x1, y1] = pt(R_OUT, ang1);
+        const [x2, y2] = pt(R_IN, ang1), [x3, y3] = pt(R_IN, ang0);
+        ang0 = ang1;
+        return `<path d="M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${R_OUT} ${R_OUT} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} L ${x2.toFixed(2)} ${y2.toFixed(2)} A ${R_IN} ${R_IN} 0 ${large} 0 ${x3.toFixed(2)} ${y3.toFixed(2)} Z" fill="${color}" stroke="#fff" stroke-width="2" stroke-linejoin="round"><title>${tip}</title></path>`;
     }).join('');
 
     const legend = entries.map(([label, value], i) => {
         const pct = ((value / total) * 100).toFixed(1);
-        const color = CHART_COLORS[i % CHART_COLORS.length];
+        const color = colors[i];
         const breakdown = breakdowns[label];
         const isClickable = breakdown && breakdown.length > 0;
         return `<div class="donut-legend-row${isClickable ? ' donut-legend-row--others' : ''}"${isClickable ? ` onclick='showOthersBreakdown(${JSON.stringify(breakdown)})' title="Click to see what's in ${esc(label)}"` : ''}>
@@ -658,40 +647,26 @@ let currentSortedRecords = [];
 let currentPage = 1;
 const RECORDS_PER_PAGE = 7;
 
+// Server-side paging: only the visible page (RECORDS_PER_PAGE rows) is ever downloaded.
+let recordsTotal = 0;
+let _recordsReq = 0;
+
 function sortAndRenderRecords() {
-    const sortKey = document.getElementById('sortRecords').value;
-    const sorted = [...currentRecords];
-    switch (sortKey) {
-        case 'latest': sorted.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)); break;
-        case 'oldest': sorted.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)); break;
-        case 'age_asc': sorted.sort((a, b) => (parseInt(a.age) || 0) - (parseInt(b.age) || 0)); break;
-        case 'age_desc': sorted.sort((a, b) => (parseInt(b.age) || 0) - (parseInt(a.age) || 0)); break;
-        case 'name_az': sorted.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || '')); break;
-        case 'name_za': sorted.sort((a, b) => (b.fullName || '').localeCompare(a.fullName || '')); break;
-        case 'gender': sorted.sort((a, b) => (a.gender || '').localeCompare(b.gender || '')); break;
-        case 'designation': sorted.sort((a, b) => (a.designation || '').localeCompare(b.designation || '')); break;
-        case 'site': sorted.sort((a, b) => (a.site || '').localeCompare(b.site || '')); break;
-        case 'camp': sorted.sort((a, b) => (a.laborCamp || '').localeCompare(b.laborCamp || '')); break;
-    }
-    currentSortedRecords = sorted;
-    const totalPages = Math.max(1, Math.ceil(sorted.length / RECORDS_PER_PAGE));
-    if (currentPage > totalPages) currentPage = totalPages;
-    if (currentPage < 1) currentPage = 1;
-    renderRecordsPage();
+    // Sorting happens on the server now, so changing the sort just reloads page 1.
+    currentPage = 1;
+    loadRecords(document.getElementById('filterFrom').value, document.getElementById('filterTo').value);
 }
 
+function recordsTotalPages() { return Math.max(1, Math.ceil(recordsTotal / RECORDS_PER_PAGE)); }
+
 function renderRecordsPage() {
-    const totalPages = Math.max(1, Math.ceil(currentSortedRecords.length / RECORDS_PER_PAGE));
-    const start = (currentPage - 1) * RECORDS_PER_PAGE;
-    const pageRecords = currentSortedRecords.slice(start, start + RECORDS_PER_PAGE);
-    renderRecordsTable(pageRecords);
-    renderPaginationControls(totalPages);
+    renderRecordsTable(currentRecords);
+    renderPaginationControls(recordsTotalPages());
 }
 
 function goToRecordsPage(page) {
-    const totalPages = Math.max(1, Math.ceil(currentSortedRecords.length / RECORDS_PER_PAGE));
-    currentPage = Math.min(Math.max(1, page), totalPages);
-    renderRecordsPage();
+    currentPage = Math.min(Math.max(1, page), recordsTotalPages());
+    loadRecords(document.getElementById('filterFrom').value, document.getElementById('filterTo').value, { preservePage: true });
     document.getElementById('recordsTable')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -701,7 +676,7 @@ function renderPaginationControls(totalPages) {
     const controls = document.getElementById('recordsPaginationControls');
     if (!wrap || !info || !controls) return;
 
-    const total = currentSortedRecords.length;
+    const total = recordsTotal;
     if (total === 0) { wrap.style.display = 'none'; return; }
     wrap.style.display = 'flex';
 
@@ -796,8 +771,7 @@ function buildRecordsParams(from, to) {
 }
 
 // Page through /api/employees to collect EVERY record matching the current filters.
-// A single page fetch caps at the server's limit (200 default / 500 max), which would
-// otherwise silently truncate the table, sort, and exports to the first page.
+// Only used by the exports; the Records tab itself loads one page at a time (see loadRecords).
 async function fetchAllRecords(from, to) {
     const base = buildRecordsParams(from, to);
     const PAGE_SIZE = 500; // server clamps limit to 500
@@ -819,24 +793,39 @@ async function fetchAllRecords(from, to) {
 }
 
 async function loadRecords(from, to, opts = {}) {
-    // Capture the site filter that is actually being applied to THIS fetch, before the
-    // await — if the admin changes the dropdown while the request is in flight, the badge
-    // must still reflect what was queried, not whatever the dropdown shows when it resolves.
     const appliedSite = isSuperAdmin() ? (document.getElementById('filterSite')?.value || '') : getAdminSite();
+    if (!opts.preservePage) currentPage = 1;
+    const myReq = ++_recordsReq;
+
+    // Instant feedback instead of an empty table while the (single, small) request runs
+    const tbody = document.getElementById('recordsBody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="26" style="text-align:center; padding:2rem; color:var(--text-light);">Loading records…</td></tr>';
+
     try {
-        const records = await fetchAllRecords(from, to);
-        if (records === null) return; // auth error already handled
-        currentRecords = records;
-        if (!opts.preservePage) currentPage = 1;
-        sortAndRenderRecords();
+        const params = buildRecordsParams(from, to).concat([
+            `page=${currentPage}`, `limit=${RECORDS_PER_PAGE}`,
+            `sort=${encodeURIComponent(document.getElementById('sortRecords')?.value || 'latest')}`
+        ]);
+        const resp = await fetch(`${API}/api/employees?${params.join('&')}`, { headers: adminHeaders() });
+        if (handleAuthError(resp)) return;
+        if (!resp.ok) throw new Error(`Records fetch failed: ${resp.status}`);
+        const result = await resp.json();
+        if (myReq !== _recordsReq) return; // a newer request superseded this one
+
+        currentRecords = result.data || [];
+        recordsTotal = result.total || 0;
+        if (currentPage > recordsTotalPages()) { currentPage = recordsTotalPages(); return loadRecords(from, to, { preservePage: true }); }
+        renderRecordsPage();
         const badge = document.getElementById('recordsCountBadge');
         if (badge) {
-            const total = currentRecords.length;
             const siteLabel = appliedSite ? ` · ${appliedSite}` : '';
-            badge.textContent = `${total} ${total === 1 ? 'record' : 'records'}${siteLabel}`;
+            badge.textContent = `${recordsTotal} ${recordsTotal === 1 ? 'record' : 'records'}${siteLabel}`;
             badge.style.display = '';
         }
-    } catch (err) { console.error('Records load failed:', err); }
+    } catch (err) {
+        console.error('Records load failed:', err);
+        if (tbody && myReq === _recordsReq) tbody.innerHTML = '<tr><td colspan="26" style="text-align:center; padding:2rem; color:var(--danger, #dc2626);">Could not load records. Please try again.</td></tr>';
+    }
 }
 
 async function deleteRecord(id) {
@@ -863,7 +852,7 @@ document.getElementById('btnResetFilter').onclick = () => {
     if (selSite) selSite.value = '';
     loadRecords();
 };
-document.getElementById('sortRecords').onchange = () => { currentPage = 1; sortAndRenderRecords(); };
+document.getElementById('sortRecords').onchange = () => sortAndRenderRecords();
 // Admin export dropdown
 (function() {
     const menu = document.getElementById('adminExportMenu');
