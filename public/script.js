@@ -1475,6 +1475,50 @@
         ctx.restore();
     }
 
+    /* Anti-tamper security seal: straddles the photo corner (half on photo, half off) so a swapped
+       photo must also re-create the seal. Hologram-style conic gradient + guilloche rosette +
+       initials-only ring text (full site name is never printed). `phase` varies the two seals. */
+    function drawSecuritySeal(ctx, cx, cy, R, siteName, phase) {
+        // Confidential: only the site's first and last letters ever appear on the seal
+        const nm = (siteName || 'XX').trim().toUpperCase();
+        const a = nm.charAt(0) || 'X';
+        const b = nm.charAt(nm.length - 1) || 'X';
+        const full = Math.PI * 2;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.lineJoin = 'round';
+
+        // One rosette curve; `k` shifts its phase so the 14 curves overlap into a flower
+        function petal(k) {
+            ctx.beginPath();
+            for (let t = 0; t <= full + 0.02; t += 0.02) {
+                const r = R * (0.62 + 0.2 * Math.sin(8 * t + k * 0.45 + phase)) + R * 0.08 * Math.sin(12 * t - k * 0.3);
+                const x = r * Math.cos(t), y = r * Math.sin(t);
+                if (t === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+        }
+
+        // 1. Black guilloche flower (lines only: no fill, halo or border)
+        ctx.lineWidth = 1.1;
+        for (let k = 0; k < 14; k++) {
+            ctx.strokeStyle = k % 2 ? 'rgba(0,0,0,0.92)' : 'rgba(0,0,0,0.6)';
+            petal(k); ctx.stroke();
+        }
+
+        // 2. Centre name on a soft white fade (no outline)
+        const fade = ctx.createRadialGradient(0, 0, R * 0.25, 0, 0, R * 0.5);
+        fade.addColorStop(0, 'rgba(255,255,255,0.97)');
+        fade.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = fade;
+        ctx.beginPath(); ctx.arc(0, 0, R * 0.5, 0, full); ctx.fill();
+        ctx.fillStyle = '#000000';
+        ctx.font = `800 ${R * 0.15}px Inter, Arial, sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(`⟁ ${a} ✦ ${b} ⟁`, 0, R * 0.01);
+
+        ctx.restore();
+    }
+
     async function renderCard(dataOverride, photoOverride) {
         const data = dataOverride || getFormData();
         const photoSrc = photoOverride !== undefined ? photoOverride : capturedPhotoDataURL;
@@ -1522,6 +1566,18 @@
             } catch {
                 console.warn('Photo load failed, rendering card without photo.');
             }
+        }
+
+        // Security seals straddling the photo's top-right and bottom-left corners
+        {
+            const sealSite = data.site || operator.site || 'UNKNOWN';
+            const sealR = 95;
+            // Push each seal outward so it sits about half on / half off the photo. Horizontal offset is small;
+            // vertical offset keeps the flower clear of the header band above and the name below.
+            const insetX = sealR * 0.1, insetY = sealR * 0.45;
+            drawSecuritySeal(ctx, phX + phW - insetX, phY + insetY, sealR, sealSite, 0.6);
+            drawSecuritySeal(ctx, phX + insetX, phY + phH - insetY, sealR, sealSite, 2.4);
+            ctx.textBaseline = 'alphabetic';
         }
 
         ctx.textAlign = 'center'; ctx.fillStyle = '#0d2240';
